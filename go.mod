@@ -1,4 +1,4 @@
-module github.com/SergeiMurashev/docapp-go
+module github.com/SergeiMurashev/bitrix-passport-exporter
 
 go 1.26.2
 

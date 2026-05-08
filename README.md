@@ -1,32 +1,41 @@
-# bitrix24-project-passport-exporter
+# bitrix-passport-exporter
 
 Мини-сервер на Go для выгрузки "Паспорта проекта" из Bitrix24 с задачами по сделкам.
 
+## Архитектура
+Структура проекта в backend-стиле (`cmd` + `internal`):
+- `cmd/server` — entrypoint приложения
+- `internal/http` — HTTP-роуты и обработчики
+- `internal/service` — бизнес-логика экспорта
+- `internal/bitrix` — клиент Bitrix24 (через `bixgo`)
+- `internal/parser` — парсинг входной выгрузки (`.xlsx` и html-xls)
+- `internal/export` — сборка итогового XLSX
+- `internal/model` — доменные модели
+- `internal/config` — конфиг окружения
+
 ## Что реализовано
-- Backend API `POST /api/export`.
-- Входные форматы: `xlsx` и HTML-таблица (`.xls` из Bitrix как HTML).
-- Парсинг реестра сделок в структуру "паспорта" (колонки, секции, нормализация полей).
+- UI в браузере: `GET /`
+- Healthcheck: `GET /healthz`
+- Export endpoint: `POST /api/export`
 - Для каждой сделки:
-    - поиск связанного проекта (`UF_CRM_PROJECT_GROUP_ID`),
-    - fallback по имени проекта (`sonet_group.get`),
-    - выгрузка задач проекта (`tasks.task.list`) с пагинацией,
-    - обогащение ответственными (`user.get`).
+  - поиск проекта по `UF_CRM_PROJECT_GROUP_ID` (fallback по названию)
+  - выгрузка задач проекта (`tasks.task.list`) с пагинацией
+  - привязка задач к нужной сделке/проекту
 - Выход: один XLSX с листами:
-    - `Паспорт проекта`
-    - `Задачи проекта`
-- Интеграция с Bitrix через библиотеку `github.com/kurerid/bixgo`.
+  - `Паспорт проекта`
+  - `Задачи проекта`
 
 ## Запуск
 ```bash
-cd /Users/sergeimurashev/GolandProjects/docapp-go
-go run .
+cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter
+go run ./cmd/server
 ```
 
-Слушает `:8080` (можно переопределить `ADDR`).
+По умолчанию слушает `:8080` (`ADDR` можно переопределить).
 
 ## API
-`POST /api/export` (`multipart/form-data`)
-- `file` — исходный файл выгрузки сделок (`.xlsx` или html-xls)
+`POST /api/export` (`multipart/form-data`):
+- `file` — файл выгрузки сделок (`.xlsx` или html-xls)
 - `webhook` — входящий webhook Bitrix24
 - `project_field_code` — опционально, по умолчанию `UF_CRM_PROJECT_GROUP_ID`
 
@@ -37,6 +46,3 @@ curl -X POST 'http://localhost:8080/api/export' \
   -F 'webhook=https://<portal>.bitrix24.ru/rest/<user_id>/<webhook_key>/' \
   --output passport_tasks.xlsx
 ```
-
-## Проверка
-- `GET /healthz` -> `ok`
