@@ -6,11 +6,15 @@ import (
 )
 
 type Config struct {
-	Addr string
+	Addr    string
+	Webhook string
 }
 
 func Load() Config {
-	return Config{Addr: env("ADDR", ":8080")}
+	return Config{
+		Addr:    env("ADDR", ":8080"),
+		Webhook: env("BITRIX_WEBHOOK_URL", ""),
+	}
 }
 
 func env(key, fallback string) string {

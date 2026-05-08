@@ -11,7 +11,7 @@ import (
 func main() {
 	cfg := config.Load()
 	mux := http.NewServeMux()
-	h := httpapi.New()
+	h := httpapi.New(cfg)
 	h.Register(mux)
 
 	log.Printf("bitrix-passport-exporter listen on %s", cfg.Addr)

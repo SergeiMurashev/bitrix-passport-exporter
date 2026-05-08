@@ -8,14 +8,17 @@ import (
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/export"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/parser"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/service"
 )
 
-type Handler struct{}
+type Handler struct {
+	cfg config.Config
+}
 
-func New() *Handler { return &Handler{} }
+func New(cfg config.Config) *Handler { return &Handler{cfg: cfg} }
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
@@ -50,9 +53,9 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webhook := strings.TrimSpace(r.FormValue("webhook"))
+	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		http.Error(w, "webhook is required", http.StatusBadRequest)
+		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
 		return
 	}
 	projectField := strings.TrimSpace(r.FormValue("project_field_code"))
@@ -130,9 +133,7 @@ const indexHTML = `<!doctype html>
       <label for="file">Файл выгрузки сделок (.xls/.xlsx/.html)</label>
       <input id="file" name="file" type="file" required>
 
-      <label for="webhook">Webhook Bitrix24</label>
-      <input id="webhook" name="webhook" type="text" placeholder="https://portal.bitrix24.ru/rest/<user>/<key>/" required>
-      <div class="hint">Нужны права CRM + Задачи + Рабочие группы + Пользователи.</div>
+      <div class="hint">Webhook берется из конфигурации сервера (BITRIX_WEBHOOK_URL).</div>
 
       <label for="project_field_code">Код поля связи сделка → проект (опционально)</label>
       <input id="project_field_code" name="project_field_code" type="text" value="UF_CRM_PROJECT_GROUP_ID">
