@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -121,11 +123,34 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	filename := strings.TrimSuffix(strings.TrimSuffix(fh.Filename, ".xlsx"), ".xls") + "_паспорт_и_задачи.xlsx"
+	filename := buildDownloadFilename(fh.Filename)
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result)
+}
+
+func buildDownloadFilename(src string) string {
+	base := strings.TrimSpace(src)
+	base = strings.TrimSuffix(base, ".xlsx")
+	base = strings.TrimSuffix(base, ".xls")
+	base = strings.TrimSuffix(base, ".html")
+	base = sanitizeASCII(base)
+	if base == "" {
+		base = "deals_export"
+	}
+	return base + "_passport_and_tasks.xlsx"
+}
+
+func sanitizeASCII(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	re := regexp.MustCompile(`[^a-z0-9._-]+`)
+	s = re.ReplaceAllString(s, "_")
+	s = strings.Trim(s, "._-")
+	if len(s) > 80 {
+		s = s[:80]
+	}
+	return s
 }
 
 const indexHTML = `<!doctype html>
@@ -201,10 +226,17 @@ const indexHTML = `<!doctype html>
       function parseFileName(contentDisposition) {
         if (!contentDisposition) return 'passport_tasks.xlsx';
         const utf = contentDisposition.match(/filename\\*=UTF-8''([^;]+)/i);
-        if (utf && utf[1]) return decodeURIComponent(utf[1]);
+        if (utf && utf[1]) {
+          const name = decodeURIComponent(utf[1]);
+          if (!looksMojibake(name)) return name;
+        }
         const plain = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-        if (plain && plain[1]) return plain[1];
+        if (plain && plain[1] && !looksMojibake(plain[1])) return plain[1];
         return 'passport_tasks.xlsx';
+      }
+
+      function looksMojibake(name) {
+        return /Ð|Ñ|�|Ñ|\uFFFD/.test(name || '');
       }
 
       form.addEventListener('submit', async function (e) {

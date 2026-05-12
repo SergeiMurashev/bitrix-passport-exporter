@@ -121,12 +121,16 @@ func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any
 
 	merged := make([]map[string]any, 0)
 	seen := make(map[string]struct{})
+	targetBinding := fmt.Sprintf("D_%d", dealID)
 	for _, filter := range variants {
 		chunk, err := c.getTasksByFilter(ctx, filter)
 		if err != nil {
 			return nil, err
 		}
 		for _, t := range chunk {
+			if !taskBoundToDeal(t, targetBinding) {
+				continue
+			}
 			id := toString(anyMapGet(t, "id", "ID"))
 			if id == "" {
 				continue
@@ -320,4 +324,51 @@ func anyMapGet(m map[string]any, keys ...string) any {
 		}
 	}
 	return nil
+}
+
+func taskBoundToDeal(task map[string]any, binding string) bool {
+	binding = strings.ToUpper(strings.TrimSpace(binding))
+	if binding == "" {
+		return false
+	}
+
+	candidates := []any{
+		anyMapGet(task, "ufCrmTask", "UF_CRM_TASK"),
+		anyMapGet(task, "crmBinding", "CRM_BINDING"),
+	}
+
+	for _, c := range candidates {
+		for _, token := range extractBindingTokens(c) {
+			if strings.EqualFold(token, binding) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func extractBindingTokens(v any) []string {
+	if v == nil {
+		return nil
+	}
+
+	switch vv := v.(type) {
+	case []any:
+		var out []string
+		for _, item := range vv {
+			out = append(out, extractBindingTokens(item)...)
+		}
+		return out
+	case map[string]any:
+		var out []string
+		for _, item := range vv {
+			out = append(out, extractBindingTokens(item)...)
+		}
+		return out
+	default:
+		s := strings.ToUpper(toString(vv))
+		re := regexp.MustCompile(`[A-Z]_\d+`)
+		return re.FindAllString(s, -1)
+	}
 }

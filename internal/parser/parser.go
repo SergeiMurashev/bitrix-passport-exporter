@@ -16,6 +16,28 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+var columnAliases = map[string][]string{
+	"Название сделки": {"Название сделки"},
+	"Стадия сделки":   {"Стадия сделки"},
+	"ID":              {"ID", "Идентификатор", "Идентификатор.", "проверка поля идентификатор 01.04"},
+	"Месторасположение, адрес": {"Месторасположение, адрес", "Местоположение", "Адрес"},
+	"МО": {"МО"},
+	"Рабочие места (постоянные) - факт": {"Рабочие места (постоянные) - факт", "Рабочие места (постоянные)-факт"},
+	"Рабочие места (постоянные) - план": {"Рабочие места (постоянные) - план", "Рабочие места (постоянные)-план"},
+	"Инвестор-инициатор":                {"Инвестор-инициатор"},
+	"Компания":                          {"Компания"},
+	"Контакт":                           {"Контакт"},
+	"Клиент":                            {"Клиент"},
+	"Описание проекта":                  {"Описание проекта", "История идеи/проекта", "Цель проекта"},
+	"Ход реализации проекта":            {"Ход реализации проекта", "Стадия проекта"},
+	"Меры поддержки по проекту":         {"Меры поддержки по проекту", "Меры поддержки"},
+	"Старт проекта":                     {"Старт проекта", "Дата начала проекта"},
+	"Окончание проекта":                 {"Окончание проекта", "Дата окончания проекта"},
+	"Общий объем инвестиций, план":      {"Общий объем инвестиций, план", "Общий объём инвестиций, план", "Объем инвестиций"},
+	"Собственные вложения , план":       {"Собственные вложения , план", "Собственные вложения, план"},
+	"Заемные средства, план":            {"Заемные средства, план", "Заемные средства , план", "Заёмные средства, план"},
+}
+
 func ParseDealsInput(r io.Reader) ([]model.ProjectRow, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -106,7 +128,7 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 	}
 	req := []string{"Название сделки", "Стадия сделки"}
 	for _, c := range req {
-		if !hasColumn(rows[0], c) {
+		if !hasAnyColumn(rows[0], c) {
 			return nil, fmt.Errorf("required column not found: %s", c)
 		}
 	}
@@ -189,7 +211,37 @@ func hasColumn(m map[string]string, key string) bool {
 	return ok
 }
 
-func getCell(m map[string]string, key string) string { return strings.TrimSpace(m[key]) }
+func hasAnyColumn(m map[string]string, key string) bool {
+	aliases, ok := columnAliases[key]
+	if !ok {
+		_, exists := m[key]
+		return exists
+	}
+	for _, alias := range aliases {
+		if _, exists := m[alias]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func getCell(m map[string]string, key string) string {
+	aliases, ok := columnAliases[key]
+	if !ok {
+		return strings.TrimSpace(m[key])
+	}
+	for _, alias := range aliases {
+		if v, exists := m[alias]; exists && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	for _, alias := range aliases {
+		if v, exists := m[alias]; exists {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
 
 func cleanSpaces(s string) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(stripHTML(s)), " "))
