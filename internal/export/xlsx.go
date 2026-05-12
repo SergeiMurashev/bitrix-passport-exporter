@@ -16,28 +16,31 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 	passport := "Паспорт проекта"
 	idx, _ := f.NewSheet(passport)
 	f.SetActiveSheet(idx)
-	headers := []string{"№", "Секция", "ID сделки", "Название сделки", "Местоположение", "Инвестор", "Описание", "Ход реализации", "Мера поддержки", "Срок реализации", "Рабочие места", "Объем инвестиций (план)", "Собственные вложения (план)", "Заемные средства (план)", "Стадия сделки"}
+	headers := []string{"№", "Секция", "Название сделки", "Местоположение", "Инвестор", "Описание", "Ход реализации", "Мера поддержки", "Срок реализации", "Рабочие места", "Объем инвестиций (план)"}
 	for i, h := range headers {
 		cellName, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(passport, cellName, h)
 	}
+	_ = f.SetColWidth(passport, "A", "A", 6)
+	_ = f.SetColWidth(passport, "B", "B", 28)
+	_ = f.SetColWidth(passport, "C", "C", 42)
+	_ = f.SetColWidth(passport, "D", "D", 30)
+	_ = f.SetColWidth(passport, "E", "E", 30)
+	_ = f.SetColWidth(passport, "F", "H", 44)
+	_ = f.SetColWidth(passport, "I", "K", 24)
 	for i, p := range projects {
 		r := i + 2
 		f.SetCellValue(passport, fmt.Sprintf("A%d", r), p.Seq)
 		f.SetCellValue(passport, fmt.Sprintf("B%d", r), p.Section)
-		f.SetCellValue(passport, fmt.Sprintf("C%d", r), p.DealID)
-		f.SetCellValue(passport, fmt.Sprintf("D%d", r), p.DealTitle)
-		f.SetCellValue(passport, fmt.Sprintf("E%d", r), p.Location)
-		f.SetCellValue(passport, fmt.Sprintf("F%d", r), p.Investor)
-		f.SetCellValue(passport, fmt.Sprintf("G%d", r), p.Description)
-		f.SetCellValue(passport, fmt.Sprintf("H%d", r), p.Progress)
-		f.SetCellValue(passport, fmt.Sprintf("I%d", r), p.Support)
-		f.SetCellValue(passport, fmt.Sprintf("J%d", r), p.DateRange)
-		f.SetCellValue(passport, fmt.Sprintf("K%d", r), p.Jobs)
-		f.SetCellValue(passport, fmt.Sprintf("L%d", r), p.InvestPlan)
-		f.SetCellValue(passport, fmt.Sprintf("M%d", r), p.OwnPlan)
-		f.SetCellValue(passport, fmt.Sprintf("N%d", r), p.LoanPlan)
-		f.SetCellValue(passport, fmt.Sprintf("O%d", r), p.ProjectStage)
+		f.SetCellValue(passport, fmt.Sprintf("C%d", r), p.DealTitle)
+		f.SetCellValue(passport, fmt.Sprintf("D%d", r), p.Location)
+		f.SetCellValue(passport, fmt.Sprintf("E%d", r), p.Investor)
+		f.SetCellValue(passport, fmt.Sprintf("F%d", r), p.Description)
+		f.SetCellValue(passport, fmt.Sprintf("G%d", r), p.Progress)
+		f.SetCellValue(passport, fmt.Sprintf("H%d", r), p.Support)
+		f.SetCellValue(passport, fmt.Sprintf("I%d", r), p.DateRange)
+		f.SetCellValue(passport, fmt.Sprintf("J%d", r), p.Jobs)
+		f.SetCellValue(passport, fmt.Sprintf("K%d", r), p.InvestPlan)
 	}
 
 	tasksSheet := "Задачи проекта"

@@ -133,7 +133,7 @@ const indexHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>WAK-1238: Паспорт проекта</title>
+  <title>Паспорт проекта</title>
   <style>
     body{font-family:Arial,sans-serif;background:#f5f7fb;margin:0;padding:24px;color:#1f2937}
     .card{max-width:760px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px}
@@ -143,21 +143,54 @@ const indexHTML = `<!doctype html>
     input[type="text"],input[type="file"]{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;box-sizing:border-box}
     button{margin-top:16px;background:#2563eb;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-size:14px;cursor:pointer}
     button:hover{background:#1d4ed8}
+    button[disabled]{opacity:.65;cursor:not-allowed}
     .hint{font-size:12px;color:#6b7280;margin-top:6px}
+    .status{margin-top:10px;font-size:13px}
+    .status.muted{color:#6b7280}
+    .status.work{color:#1d4ed8;font-weight:600}
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Выгрузка “Паспорта проекта” + задач</h1>
     <p>Загрузите файл сделок из Bitrix24 и получите итоговый XLSX.</p>
-    <form method="post" action="/api/export" enctype="multipart/form-data">
+    <form id="exportForm" method="post" action="/api/export" enctype="multipart/form-data">
       <label for="file">Файл выгрузки сделок (.xls/.xlsx/.html)</label>
       <input id="file" name="file" type="file" required>
+      <div id="fileStatus" class="status muted">Файл не выбран.</div>
 
       <div class="hint">Webhook берется из конфигурации сервера (BITRIX_WEBHOOK_URL).</div>
 
-      <button type="submit">Сформировать XLSX</button>
+      <button id="submitBtn" type="submit">Сформировать XLSX</button>
+      <div id="progressStatus" class="status muted"></div>
     </form>
   </div>
+  <script>
+    (function () {
+      const form = document.getElementById('exportForm');
+      const fileInput = document.getElementById('file');
+      const fileStatus = document.getElementById('fileStatus');
+      const progressStatus = document.getElementById('progressStatus');
+      const submitBtn = document.getElementById('submitBtn');
+
+      fileInput.addEventListener('change', function () {
+        if (fileInput.files && fileInput.files.length > 0) {
+          const file = fileInput.files[0];
+          fileStatus.textContent = 'Выбран файл: ' + file.name;
+          fileStatus.className = 'status';
+        } else {
+          fileStatus.textContent = 'Файл не выбран.';
+          fileStatus.className = 'status muted';
+        }
+      });
+
+      form.addEventListener('submit', function () {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Формируем...';
+        progressStatus.textContent = 'Генерируем паспорт проекта и подтягиваем задачи из Bitrix24. Это может занять 1-3 минуты.';
+        progressStatus.className = 'status work';
+      });
+    })();
+  </script>
 </body>
 </html>`

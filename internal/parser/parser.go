@@ -104,15 +104,14 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	req := []string{"Название сделки", "Стадия сделки", "Инвестор-инициатор"}
+	req := []string{"Название сделки", "Стадия сделки"}
 	for _, c := range req {
 		if !hasColumn(rows[0], c) {
 			return nil, fmt.Errorf("required column not found: %s", c)
 		}
 	}
 
-	seq := 1
-	var out []model.ProjectRow
+	bySection := map[string][]model.ProjectRow{}
 	for _, r := range rows {
 		title := getCell(r, "Название сделки")
 		if title == "" {
@@ -127,15 +126,20 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 		if jobsRaw == "" || jobsRaw == "0" {
 			jobsRaw = getCell(r, "Рабочие места (постоянные) - план")
 		}
-		out = append(out, model.ProjectRow{
-			Seq:          seq,
-			Section:      detectSection(stage, getCell(r, "Окончание проекта")),
+		sectionKey := detectSection(stage, getCell(r, "Окончание проекта"), cleanSpaces(getCell(r, "Ход реализации проекта")))
+		investorRaw := pickFirstNonEmpty(
+			getCell(r, "Инвестор-инициатор"),
+			getCell(r, "Компания"),
+			getCell(r, "Контакт"),
+			getCell(r, "Клиент"),
+		)
+		bySection[sectionKey] = append(bySection[sectionKey], model.ProjectRow{
 			DealID:       extractFirstInt(getCell(r, "ID")),
 			DealTitle:    title,
 			Location:     address,
-			Investor:     investorShort(getCell(r, "Инвестор-инициатор")),
-			Description:  cleanSpaces(getCell(r, "Описание проекта")),
-			Progress:     cleanSpaces(getCell(r, "Ход реализации проекта")),
+			Investor:     investorShort(investorRaw),
+			Description:  cleanDescription(cleanSpaces(getCell(r, "Описание проекта"))),
+			Progress:     cleanProgress(cleanSpaces(getCell(r, "Ход реализации проекта"))),
 			Support:      cleanSpaces(getCell(r, "Меры поддержки по проекту")),
 			DateRange:    formatDateRange(getCell(r, "Старт проекта"), getCell(r, "Окончание проекта")),
 			Jobs:         agreeJobs(jobsRaw),
@@ -144,15 +148,33 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 			LoanPlan:     getCell(r, "Заемные средства, план"),
 			ProjectStage: stage,
 		})
-		seq++
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Section == out[j].Section {
-			return out[i].DealTitle < out[j].DealTitle
+
+	order, labels := buildSectionOrder(bySection)
+	seq := 1
+	out := make([]model.ProjectRow, 0, len(rows))
+	for _, key := range order {
+		projects := bySection[key]
+		sort.SliceStable(projects, func(i, j int) bool {
+			return projects[i].DealTitle < projects[j].DealTitle
+		})
+		for _, p := range projects {
+			p.Seq = seq
+			p.Section = labels[key]
+			out = append(out, p)
+			seq++
 		}
-		return out[i].Section < out[j].Section
-	})
+	}
 	return out, nil
+}
+
+func pickFirstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func cell(row []string, idx int) string {
@@ -188,12 +210,18 @@ func investorShort(s string) string {
 	return t
 }
 
-func detectSection(stage, endDate string) string {
+func detectSection(stage, endDate, progress string) string {
 	s := strings.ToLower(stage)
 	currentYear := time.Now().Year()
 	if strings.Contains(s, "реализован") {
 		if y := regexp.MustCompile(`(\d{4})$`).FindString(strings.TrimSpace(endDate)); y != "" {
 			return y
+		}
+		if years := regexp.MustCompile(`\d{2}[./]\d{2}[./](\d{4})`).FindAllStringSubmatch(progress, -1); len(years) > 0 {
+			return years[len(years)-1][1]
+		}
+		if years := regexp.MustCompile(`\d{4}`).FindAllString(progress, -1); len(years) > 0 {
+			return years[len(years)-1]
 		}
 		return strconv.Itoa(currentYear)
 	}
@@ -209,6 +237,79 @@ func detectSection(stage, endDate string) string {
 	default:
 		return "прочие"
 	}
+}
+
+func buildSectionOrder(groups map[string][]model.ProjectRow) ([]string, map[string]string) {
+	currentYear := time.Now().Year()
+	fixed := []string{
+		fmt.Sprintf("%d_сопровождение", currentYear),
+		fmt.Sprintf("%d_реализуемые", currentYear),
+		fmt.Sprintf("%d_планируемые", currentYear),
+		"исключённые",
+		"прочие",
+	}
+	fixedSet := map[string]bool{}
+	for _, k := range fixed {
+		fixedSet[k] = true
+	}
+
+	var yearKeys []string
+	for k, v := range groups {
+		if len(v) == 0 || fixedSet[k] {
+			continue
+		}
+		if regexp.MustCompile(`^\d{4}$`).MatchString(k) {
+			yearKeys = append(yearKeys, k)
+		}
+	}
+	sort.Slice(yearKeys, func(i, j int) bool {
+		iy, _ := strconv.Atoi(yearKeys[i])
+		jy, _ := strconv.Atoi(yearKeys[j])
+		return iy < jy
+	})
+
+	order := append([]string{}, yearKeys...)
+	for _, k := range fixed {
+		if len(groups[k]) > 0 {
+			order = append(order, k)
+		}
+	}
+
+	labels := map[string]string{}
+	for _, y := range yearKeys {
+		labels[y] = fmt.Sprintf("Реализованные в %s г.", y)
+	}
+	labels[fmt.Sprintf("%d_сопровождение", currentYear)] = fmt.Sprintf("Сопровождаемые в %d г.", currentYear)
+	labels[fmt.Sprintf("%d_реализуемые", currentYear)] = fmt.Sprintf("Реализуемые в %d г.", currentYear)
+	labels[fmt.Sprintf("%d_планируемые", currentYear)] = fmt.Sprintf("Планируемые к реализации в %d г.", currentYear)
+	labels["исключённые"] = "Исключённые из реестра"
+	labels["прочие"] = "Прочие"
+
+	return order, labels
+}
+
+func cleanDescription(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	prefixes := []string{
+		`(?i)^проектом предполагается\s*:?\s*`,
+		`(?i)^в рамках реализации проекта\s*:?\s*`,
+		`(?i)^в рамках проекта\s*:?\s*`,
+	}
+	result := strings.TrimSpace(text)
+	for _, p := range prefixes {
+		result = regexp.MustCompile(p).ReplaceAllString(result, "")
+	}
+	result = strings.TrimSpace(strings.TrimLeft(result, ":;, "))
+	if result == "" {
+		return ""
+	}
+	return strings.ToUpper(result[:1]) + result[1:]
+}
+
+func cleanProgress(text string) string {
+	return cleanDescription(text)
 }
 
 func formatDateRange(start, end string) string {
