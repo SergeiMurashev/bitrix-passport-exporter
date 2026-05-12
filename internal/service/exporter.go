@@ -15,34 +15,56 @@ type Exporter struct {
 	bitrix *bitrix.Client
 }
 
+type ExportStats struct {
+	DealsTotal           int
+	DealsWithProject     int
+	DealsWithoutProject  int
+	DealsResolveErrors   int
+	ProjectsWithTasks    int
+	ProjectsWithoutTasks int
+	TasksTotal           int
+	TaskLoadErrors       int
+}
+
 func NewExporter(client *bitrix.Client) *Exporter {
 	return &Exporter{bitrix: client}
 }
 
-func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, projectField string) ([]model.TaskRow, error) {
+func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, projectField string) ([]model.TaskRow, ExportStats, []string, error) {
 	userCache := map[int]string{}
 	var tasks []model.TaskRow
+	var issues []string
+	stats := ExportStats{DealsTotal: len(projects)}
 
 	for _, p := range projects {
 		projectID, source, err := e.bitrix.ResolveProjectForDeal(ctx, p, projectField)
 		if err != nil {
-			tasks = append(tasks, model.TaskRow{DealID: p.DealID, DealTitle: p.DealTitle, Comment: "Ошибка: " + err.Error()})
+			if bitrix.IsAuthError(err) {
+				return nil, stats, issues, fmt.Errorf("bitrix webhook auth failed: %w", err)
+			}
+			stats.DealsResolveErrors++
+			issues = append(issues, fmt.Sprintf("deal_id=%d title=%q resolve project error: %v", p.DealID, p.DealTitle, err))
 			continue
 		}
 		if projectID == 0 {
-			tasks = append(tasks, model.TaskRow{DealID: p.DealID, DealTitle: p.DealTitle, Comment: "Не найден связанный проект"})
+			stats.DealsWithoutProject++
+			issues = append(issues, fmt.Sprintf("deal_id=%d title=%q linked project not found", p.DealID, p.DealTitle))
 			continue
 		}
+		stats.DealsWithProject++
 
 		projectTasks, err := e.bitrix.GetProjectTasks(ctx, projectID)
 		if err != nil {
-			tasks = append(tasks, model.TaskRow{DealID: p.DealID, DealTitle: p.DealTitle, ProjectID: projectID, LinkSource: source, Comment: "Ошибка задач: " + err.Error()})
+			stats.TaskLoadErrors++
+			issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d load tasks error: %v", p.DealID, projectID, err))
 			continue
 		}
 		if len(projectTasks) == 0 {
-			tasks = append(tasks, model.TaskRow{DealID: p.DealID, DealTitle: p.DealTitle, ProjectID: projectID, LinkSource: source, Comment: "Задачи не найдены"})
+			stats.ProjectsWithoutTasks++
+			issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d has no tasks", p.DealID, projectID))
 			continue
 		}
+		stats.ProjectsWithTasks++
 
 		for _, t := range projectTasks {
 			respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))
@@ -71,7 +93,8 @@ func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, 
 			})
 		}
 	}
-	return tasks, nil
+	stats.TasksTotal = len(tasks)
+	return tasks, stats, issues, nil
 }
 
 func taskStatus(code int) string {

@@ -11,6 +11,8 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 	f := excelize.NewFile()
 	defer f.Close()
 
+	_ = f.DeleteSheet("Sheet1")
+
 	passport := "Паспорт проекта"
 	idx, _ := f.NewSheet(passport)
 	f.SetActiveSheet(idx)

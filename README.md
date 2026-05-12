@@ -45,12 +45,11 @@ go run ./cmd/server
 ## API
 `POST /api/export` (`multipart/form-data`):
 - `file` — файл выгрузки сделок (`.xlsx` или html-xls)
-- `project_field_code` — опционально, по умолчанию `UF_CRM_PROJECT_GROUP_ID`
+- код поля связи сделка → проект фиксирован в backend: `UF_CRM_PROJECT_GROUP_ID`
 
 Пример:
 ```bash
 curl -X POST 'http://localhost:8080/api/export' \
   -F 'file=@/absolute/path/deals.xls' \
-  -F 'project_field_code=UF_CRM_PROJECT_GROUP_ID' \
   --output passport_tasks.xlsx
 ```

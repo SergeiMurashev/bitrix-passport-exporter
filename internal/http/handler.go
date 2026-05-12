@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ import (
 type Handler struct {
 	cfg config.Config
 }
+
+const projectFieldCode = "UF_CRM_PROJECT_GROUP_ID"
 
 func New(cfg config.Config) *Handler { return &Handler{cfg: cfg} }
 
@@ -58,10 +61,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
 		return
 	}
-	projectField := strings.TrimSpace(r.FormValue("project_field_code"))
-	if projectField == "" {
-		projectField = "UF_CRM_PROJECT_GROUP_ID"
-	}
+	projectField := projectFieldCode
 
 	file, fh, err := r.FormFile("file")
 	if err != nil {
@@ -79,6 +79,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
+	log.Printf("export request: file=%q deals=%d project_field=%s", fh.Filename, len(projects), projectField)
 
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
@@ -87,12 +88,32 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := service.NewExporter(bClient)
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Minute)
+	// Do not bind long export to request cancellation from browser/client.
+	// Otherwise upload/download interruptions cancel Bitrix calls mid-flight.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	tasks, err := svc.BuildTasks(ctx, projects, projectField)
+	tasks, stats, issues, err := svc.BuildTasks(ctx, projects, projectField)
 	if err != nil {
+		if strings.Contains(err.Error(), "webhook auth failed") {
+			http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+			return
+		}
 		http.Error(w, "failed to collect tasks: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	log.Printf(
+		"export stats: deals_total=%d deals_with_project=%d deals_without_project=%d resolve_errors=%d projects_with_tasks=%d projects_without_tasks=%d task_load_errors=%d tasks_total=%d",
+		stats.DealsTotal,
+		stats.DealsWithProject,
+		stats.DealsWithoutProject,
+		stats.DealsResolveErrors,
+		stats.ProjectsWithTasks,
+		stats.ProjectsWithoutTasks,
+		stats.TaskLoadErrors,
+		stats.TasksTotal,
+	)
+	for _, issue := range issues {
+		log.Printf("export issue: %s", issue)
 	}
 
 	result, err := export.BuildResultXLSX(projects, tasks)
@@ -134,9 +155,6 @@ const indexHTML = `<!doctype html>
       <input id="file" name="file" type="file" required>
 
       <div class="hint">Webhook берется из конфигурации сервера (BITRIX_WEBHOOK_URL).</div>
-
-      <label for="project_field_code">Код поля связи сделка → проект (опционально)</label>
-      <input id="project_field_code" name="project_field_code" type="text" value="UF_CRM_PROJECT_GROUP_ID">
 
       <button type="submit">Сформировать XLSX</button>
     </form>
