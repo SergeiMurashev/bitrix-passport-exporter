@@ -13,7 +13,7 @@ type Config struct {
 func Load() Config {
 	return Config{
 		Addr:    env("ADDR", ":25504"),
-		Webhook: env("BITRIX_WEBHOOK_URL", "https://b24-xo2ccz.bitrix24.ru/rest/1/n195u3mbvu1jkonf/"),
+		Webhook: env("BITRIX_WEBHOOK_URL", ""),
 	}
 }
 

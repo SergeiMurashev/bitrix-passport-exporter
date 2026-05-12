@@ -37,34 +37,59 @@ func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, 
 	stats := ExportStats{DealsTotal: len(projects)}
 
 	for _, p := range projects {
-		projectID, source, err := e.bitrix.ResolveProjectForDeal(ctx, p, projectField)
+		projectID := 0
+		source := "deal.binding"
+
+		projectTasks, err := e.bitrix.GetDealTasks(ctx, p.DealID)
 		if err != nil {
 			if bitrix.IsAuthError(err) {
 				return nil, stats, issues, fmt.Errorf("bitrix webhook auth failed: %w", err)
 			}
-			stats.DealsResolveErrors++
-			issues = append(issues, fmt.Sprintf("deal_id=%d title=%q resolve project error: %v", p.DealID, p.DealTitle, err))
-			continue
-		}
-		if projectID == 0 {
-			stats.DealsWithoutProject++
-			issues = append(issues, fmt.Sprintf("deal_id=%d title=%q linked project not found", p.DealID, p.DealTitle))
-			continue
-		}
-		stats.DealsWithProject++
-
-		projectTasks, err := e.bitrix.GetProjectTasks(ctx, projectID)
-		if err != nil {
 			stats.TaskLoadErrors++
-			issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d load tasks error: %v", p.DealID, projectID, err))
-			continue
+			issues = append(issues, fmt.Sprintf("deal_id=%d title=%q load deal-bound tasks error: %v", p.DealID, p.DealTitle, err))
+			projectTasks = nil
 		}
+
 		if len(projectTasks) == 0 {
-			stats.ProjectsWithoutTasks++
-			issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d has no tasks", p.DealID, projectID))
+			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(ctx, p, projectField)
+			if resolveErr != nil {
+				if bitrix.IsAuthError(resolveErr) {
+					return nil, stats, issues, fmt.Errorf("bitrix webhook auth failed: %w", resolveErr)
+				}
+				stats.DealsResolveErrors++
+				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q resolve project error: %v", p.DealID, p.DealTitle, resolveErr))
+				continue
+			}
+
+			projectID = resolvedProjectID
+			source = resolvedSource
+			if projectID == 0 {
+				stats.DealsWithoutProject++
+				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q linked project not found and deal-bound tasks are empty", p.DealID, p.DealTitle))
+				continue
+			}
+			stats.DealsWithProject++
+
+			projectTasks, err = e.bitrix.GetProjectTasks(ctx, projectID)
+			if err != nil {
+				stats.TaskLoadErrors++
+				issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d load project tasks error: %v", p.DealID, projectID, err))
+				continue
+			}
+		}
+
+		if len(projectTasks) == 0 {
+			if projectID > 0 {
+				stats.ProjectsWithoutTasks++
+				issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d has no tasks", p.DealID, projectID))
+			} else {
+				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q has no deal-bound tasks", p.DealID, p.DealTitle))
+			}
 			continue
 		}
-		stats.ProjectsWithTasks++
+		if projectID > 0 {
+			stats.ProjectsWithTasks++
+		}
 
 		for _, t := range projectTasks {
 			respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))

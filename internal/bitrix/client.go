@@ -107,6 +107,72 @@ func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string
 	return all, nil
 }
 
+func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any, error) {
+	if dealID <= 0 {
+		return nil, nil
+	}
+
+	// Bitrix portals vary: some use UF_CRM_TASK, some rely on CRM binding filters.
+	variants := []map[string]any{
+		{"UF_CRM_TASK": fmt.Sprintf("D_%d", dealID)},
+		{"CRM_BINDING": fmt.Sprintf("D_%d", dealID)},
+		{"UF_CRM_TASK": dealID},
+	}
+
+	merged := make([]map[string]any, 0)
+	seen := make(map[string]struct{})
+	for _, filter := range variants {
+		chunk, err := c.getTasksByFilter(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range chunk {
+			id := toString(anyMapGet(t, "id", "ID"))
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			merged = append(merged, t)
+		}
+	}
+
+	return merged, nil
+}
+
+func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
+	start := 0
+	var all []map[string]any
+
+	for {
+		resp, err := c.callWithRetry(ctx, "tasks.task.list", map[string]any{
+			"filter": filter,
+			"select": []string{"ID", "TITLE", "RESPONSIBLE_ID", "DEADLINE", "STATUS", "DESCRIPTION", "UF_CRM_TASK", "CRM_BINDING"},
+			"start":  start,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		resultMap, _ := resp.Result.(map[string]any)
+		chunk := toSliceMap(resultMap["tasks"])
+		if len(chunk) == 0 {
+			chunk = toSliceMap(resultMap["items"])
+		}
+		all = append(all, chunk...)
+
+		next := toInt(fmt.Sprintf("%v", resultMap["next"]))
+		if next == 0 || len(chunk) == 0 {
+			break
+		}
+		start = next
+	}
+
+	return all, nil
+}
+
 func (c *Client) GetUserName(ctx context.Context, userID int) (string, error) {
 	resp, err := c.callWithRetry(ctx, "user.get", map[string]any{
 		"FILTER": map[string]any{"ID": userID},
@@ -245,4 +311,13 @@ func toInt(s string) int {
 	}
 	n, _ := strconv.Atoi(m)
 	return n
+}
+
+func anyMapGet(m map[string]any, keys ...string) any {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			return v
+		}
+	}
+	return nil
 }

@@ -184,11 +184,65 @@ const indexHTML = `<!doctype html>
         }
       });
 
-      form.addEventListener('submit', function () {
+      function setWorkingState() {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Формируем...';
         progressStatus.textContent = 'Генерируем паспорт проекта и подтягиваем задачи из Bitrix24. Это может занять 1-3 минуты.';
         progressStatus.className = 'status work';
+      }
+
+      function resetState(doneText) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Сформировать XLSX';
+        progressStatus.textContent = doneText || '';
+        progressStatus.className = doneText ? 'status' : 'status muted';
+      }
+
+      function parseFileName(contentDisposition) {
+        if (!contentDisposition) return 'passport_tasks.xlsx';
+        const utf = contentDisposition.match(/filename\\*=UTF-8''([^;]+)/i);
+        if (utf && utf[1]) return decodeURIComponent(utf[1]);
+        const plain = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+        if (plain && plain[1]) return plain[1];
+        return 'passport_tasks.xlsx';
+      }
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (!fileInput.files || fileInput.files.length === 0) {
+          fileStatus.textContent = 'Сначала выберите файл.';
+          fileStatus.className = 'status';
+          return;
+        }
+        setWorkingState();
+        try {
+          const formData = new FormData(form);
+          const response = await fetch(form.action, {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(errText || ('HTTP ' + response.status));
+          }
+
+          const blob = await response.blob();
+          const filename = parseFileName(response.headers.get('Content-Disposition'));
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          resetState('Готово. Файл сформирован и скачан.');
+        } catch (err) {
+          console.error(err);
+          resetState('Ошибка формирования файла. Проверьте логи сервера.');
+        }
       });
     })();
   </script>
