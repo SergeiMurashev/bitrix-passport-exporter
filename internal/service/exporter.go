@@ -76,7 +76,13 @@ func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, 
 
 func taskStatus(code int) string {
 	m := map[int]string{1: "Новая", 2: "Ждет выполнения", 3: "Выполняется", 4: "Ожидает контроля", 5: "Завершена", 6: "Отложена", 7: "Отклонена"}
-	return m[code]
+	if status, ok := m[code]; ok {
+		return status
+	}
+	if code == 0 {
+		return ""
+	}
+	return strconv.Itoa(code)
 }
 
 func normalizeDeadline(s string) string {

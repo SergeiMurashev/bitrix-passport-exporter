@@ -54,6 +54,9 @@ func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, 
 	if len(grpResp.Result) == 0 {
 		return 0, "", nil
 	}
+	if len(grpResp.Result) > 1 {
+		return 0, "", fmt.Errorf("found %d projects by title %q; ambiguous fallback", len(grpResp.Result), p.DealTitle)
+	}
 	return toInt(fmt.Sprintf("%v", grpResp.Result[0]["ID"])), "sonet_group.get(NAME)", nil
 }
 

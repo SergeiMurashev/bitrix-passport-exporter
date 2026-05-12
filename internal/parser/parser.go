@@ -190,19 +190,20 @@ func investorShort(s string) string {
 
 func detectSection(stage, endDate string) string {
 	s := strings.ToLower(stage)
+	currentYear := time.Now().Year()
 	if strings.Contains(s, "реализован") {
 		if y := regexp.MustCompile(`(\d{4})$`).FindString(strings.TrimSpace(endDate)); y != "" {
 			return y
 		}
-		return strconv.Itoa(time.Now().Year())
+		return strconv.Itoa(currentYear)
 	}
 	switch {
 	case strings.Contains(s, "сопровожда"):
-		return "2026_сопровождение"
+		return fmt.Sprintf("%d_сопровождение", currentYear)
 	case strings.Contains(s, "реализуем"):
-		return "2026_реализуемые"
+		return fmt.Sprintf("%d_реализуемые", currentYear)
 	case strings.Contains(s, "планиру"):
-		return "2026_планируемые"
+		return fmt.Sprintf("%d_планируемые", currentYear)
 	case strings.Contains(s, "исключ"):
 		return "исключённые"
 	default:
