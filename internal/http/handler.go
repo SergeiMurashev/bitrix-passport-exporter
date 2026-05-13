@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -19,6 +18,7 @@ import (
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/parser"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/service"
+	log "github.com/sirupsen/logrus"
 )
 
 type Handler struct {
@@ -106,7 +106,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	projects, sourceLabel, err := h.loadProjects(r, bClient, dealIDs)
 	if err != nil {
-		log.Printf("export load projects failed: deal_ids=%v err=%v", dealIDs, err)
+		log.WithError(err).WithField("deal_ids", dealIDs).Error("export load projects failed")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -114,7 +114,12 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
-	log.Printf("export request: source=%s deals=%d project_field=%s deal_ids=%v", sourceLabel, len(projects), projectField, dealIDs)
+	log.WithFields(log.Fields{
+		"source":        sourceLabel,
+		"deals":         len(projects),
+		"project_field": projectField,
+		"deal_ids":      dealIDs,
+	}).Info("export request")
 
 	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
 	isFullBitrixExport := sourceLabel == "bitrix_api"
@@ -139,7 +144,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		start := 0
 		processed := 0
 		var allProjects []model.ProjectRow
-		log.Printf("export phase=passport source=bitrix_api started")
+		log.WithField("source", "bitrix_api").Info("export phase=passport started")
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
@@ -151,15 +156,25 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			}
 			allProjects = append(allProjects, page.Rows...)
 			processed += len(page.Rows)
-			log.Printf("export progress phase=passport deals_processed=%d next=%d", processed, page.Next)
+			log.WithFields(log.Fields{
+				"phase":           "passport",
+				"deals_processed": processed,
+				"next":            page.Next,
+			}).Info("export progress")
 			if page.Next == 0 || page.Next <= start {
 				break
 			}
 			start = page.Next
 		}
-		log.Printf("export phase=passport finished deals_total=%d", len(allProjects))
+		log.WithFields(log.Fields{
+			"phase":       "passport",
+			"deals_total": len(allProjects),
+		}).Info("export phase finished")
 
-		log.Printf("export phase=tasks started deals_total=%d", len(allProjects))
+		log.WithFields(log.Fields{
+			"phase":       "tasks",
+			"deals_total": len(allProjects),
+		}).Info("export phase started")
 		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
 			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, projectField, allowTitleFallback)
 			if allErr != nil {
@@ -173,7 +188,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			tasks = allTasks
 			issues = allIssues
 			stats = mergeExportStats(stats, allStats)
-			log.Printf("export progress phase=tasks deals_processed=%d tasks_total=%d", len(allProjects), len(tasks))
+			log.WithFields(log.Fields{
+				"phase":           "tasks",
+				"deals_processed": len(allProjects),
+				"tasks_total":     len(tasks),
+			}).Info("export progress")
 		} else {
 			for i := 0; i < len(allProjects); i += pageSize {
 				end := i + pageSize
@@ -193,10 +212,17 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				tasks = append(tasks, chunkTasks...)
 				issues = append(issues, chunkIssues...)
 				stats = mergeExportStats(stats, chunkStats)
-				log.Printf("export progress phase=tasks deals_processed=%d tasks_total=%d", end, len(tasks))
+				log.WithFields(log.Fields{
+					"phase":           "tasks",
+					"deals_processed": end,
+					"tasks_total":     len(tasks),
+				}).Info("export progress")
 			}
 		}
-		log.Printf("export phase=tasks finished tasks_total=%d", len(tasks))
+		log.WithFields(log.Fields{
+			"phase":       "tasks",
+			"tasks_total": len(tasks),
+		}).Info("export phase finished")
 
 		for i := range allProjects {
 			allProjects[i].Seq = i + 1
@@ -214,19 +240,18 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	log.Printf(
-		"export stats: deals_total=%d deals_with_project=%d deals_without_project=%d resolve_errors=%d projects_with_tasks=%d projects_without_tasks=%d task_load_errors=%d tasks_total=%d",
-		stats.DealsTotal,
-		stats.DealsWithProject,
-		stats.DealsWithoutProject,
-		stats.DealsResolveErrors,
-		stats.ProjectsWithTasks,
-		stats.ProjectsWithoutTasks,
-		stats.TaskLoadErrors,
-		stats.TasksTotal,
-	)
+	log.WithFields(log.Fields{
+		"deals_total":            stats.DealsTotal,
+		"deals_with_project":     stats.DealsWithProject,
+		"deals_without_project":  stats.DealsWithoutProject,
+		"resolve_errors":         stats.DealsResolveErrors,
+		"projects_with_tasks":    stats.ProjectsWithTasks,
+		"projects_without_tasks": stats.ProjectsWithoutTasks,
+		"task_load_errors":       stats.TaskLoadErrors,
+		"tasks_total":            stats.TasksTotal,
+	}).Info("export stats")
 	for _, issue := range issues {
-		log.Printf("export issue: %s", issue)
+		log.WithField("issue", issue).Warn("export issue")
 	}
 
 	result, err := export.BuildResultXLSX(projects, tasks)
@@ -235,6 +260,12 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := buildDownloadFilename(sourceLabel, dealIDs)
+	w.Header().Set("X-Export-Success", "true")
+	w.Header().Set("X-Export-Source", sourceLabel)
+	w.Header().Set("X-Export-Deals-Total", strconv.Itoa(stats.DealsTotal))
+	w.Header().Set("X-Export-Tasks-Total", strconv.Itoa(stats.TasksTotal))
+	w.Header().Set("X-Export-Issues-Count", strconv.Itoa(len(issues)))
+	w.Header().Set("X-Export-File-Name", filename)
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
@@ -292,7 +323,7 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 
 	deals, err := bClient.ListDealIDs(ctx)
 	if err != nil {
-		log.Printf("deal ids load failed: err=%v", err)
+		log.WithError(err).Error("deal ids load failed")
 		http.Error(w, "failed to load deal ids: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -323,7 +354,7 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	fields, err := bClient.ListDealFields(ctx)
 	if err != nil {
-		log.Printf("deal fields load failed: err=%v", err)
+		log.WithError(err).Error("deal fields load failed")
 		http.Error(w, "failed to load deal fields: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -526,6 +557,14 @@ const indexHTML = `<!doctype html>
         setWorkingState();
         try {
           const formData = new FormData(form);
+          const requestPayload = {};
+          formData.forEach((value, key) => {
+            if (value instanceof File) {
+              requestPayload[key] = value && value.name ? value.name : '';
+              return;
+            }
+            requestPayload[key] = String(value || '');
+          });
           const response = await fetch(form.action, {
             method: 'POST',
             body: formData
@@ -533,11 +572,37 @@ const indexHTML = `<!doctype html>
 
           if (!response.ok) {
             const errText = await response.text();
+            console.error('Export request failed', {
+              status: response.status,
+              statusText: response.statusText,
+              payload: errText
+            });
             throw new Error(errText || ('HTTP ' + response.status));
           }
 
           const blob = await response.blob();
           const filename = parseFileName(response.headers.get('Content-Disposition'));
+          const exportMeta = {
+            success: response.headers.get('X-Export-Success'),
+            source: response.headers.get('X-Export-Source'),
+            dealsTotal: response.headers.get('X-Export-Deals-Total'),
+            tasksTotal: response.headers.get('X-Export-Tasks-Total'),
+            issuesCount: response.headers.get('X-Export-Issues-Count'),
+            fileName: response.headers.get('X-Export-File-Name')
+          };
+          console.log('Export request success', {
+            request: requestPayload,
+            response: {
+              status: response.status,
+              statusText: response.statusText
+            },
+            result: {
+              filename: filename,
+              bytes: blob.size,
+              contentType: blob.type,
+              meta: exportMeta
+            }
+          });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -547,10 +612,16 @@ const indexHTML = `<!doctype html>
           a.remove();
           URL.revokeObjectURL(url);
 
-          resetState('Готово. Файл сформирован и скачан.');
+          resetState(
+            'Готово. Файл сформирован и скачан. ' +
+            '[deals=' + (exportMeta.dealsTotal || 'n/a') +
+            ', tasks=' + (exportMeta.tasksTotal || 'n/a') +
+            ', issues=' + (exportMeta.issuesCount || '0') + ']'
+          );
         } catch (err) {
-          console.error(err);
-          resetState('Ошибка формирования файла. Проверьте логи сервера.');
+          console.error('Export request error', err);
+          const msg = (err && err.message) ? err.message : 'Ошибка формирования файла. Проверьте логи сервера.';
+          resetState(msg);
         }
       });
     })();
