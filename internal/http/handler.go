@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
@@ -21,7 +22,9 @@ import (
 )
 
 type Handler struct {
-	cfg config.Config
+	cfg            config.Config
+	mu             sync.Mutex
+	fullExportBusy bool
 }
 
 const projectFieldCode = "UF_CRM_PROJECT_GROUP_ID"
@@ -92,6 +95,15 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isFullExport := len(dealIDs) == 0
+	if isFullExport {
+		if !h.tryStartFullExport() {
+			http.Error(w, "full export is already running; please wait and retry", http.StatusTooManyRequests)
+			return
+		}
+		defer h.finishFullExport()
+	}
+
 	projects, sourceLabel, err := h.loadProjects(r, bClient, dealIDs)
 	if err != nil {
 		log.Printf("export load projects failed: deal_ids=%v err=%v", dealIDs, err)
@@ -127,6 +139,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		start := 0
 		processed := 0
 		var allProjects []model.ProjectRow
+		log.Printf("export phase=passport source=bitrix_api started")
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
@@ -136,7 +149,24 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			if len(page.Rows) == 0 {
 				break
 			}
-			chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, page.Rows, projectField, allowTitleFallback)
+			allProjects = append(allProjects, page.Rows...)
+			processed += len(page.Rows)
+			log.Printf("export progress phase=passport deals_processed=%d next=%d", processed, page.Next)
+			if page.Next == 0 || page.Next <= start {
+				break
+			}
+			start = page.Next
+		}
+		log.Printf("export phase=passport finished deals_total=%d", len(allProjects))
+
+		log.Printf("export phase=tasks started deals_total=%d", len(allProjects))
+		for i := 0; i < len(allProjects); i += pageSize {
+			end := i + pageSize
+			if end > len(allProjects) {
+				end = len(allProjects)
+			}
+			chunk := allProjects[i:end]
+			chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, projectField, allowTitleFallback)
 			if chunkErr != nil {
 				if strings.Contains(chunkErr.Error(), "webhook auth failed") {
 					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
@@ -145,17 +175,13 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "failed to collect tasks: "+chunkErr.Error(), http.StatusInternalServerError)
 				return
 			}
-			allProjects = append(allProjects, page.Rows...)
 			tasks = append(tasks, chunkTasks...)
 			issues = append(issues, chunkIssues...)
 			stats = mergeExportStats(stats, chunkStats)
-			processed += len(page.Rows)
-			log.Printf("export progress: deals_processed=%d tasks_total=%d next=%d", processed, len(tasks), page.Next)
-			if page.Next == 0 || page.Next <= start {
-				break
-			}
-			start = page.Next
+			log.Printf("export progress phase=tasks deals_processed=%d tasks_total=%d", end, len(tasks))
 		}
+		log.Printf("export phase=tasks finished tasks_total=%d", len(tasks))
+
 		for i := range allProjects {
 			allProjects[i].Seq = i + 1
 		}
@@ -197,6 +223,22 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result)
+}
+
+func (h *Handler) tryStartFullExport() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.fullExportBusy {
+		return false
+	}
+	h.fullExportBusy = true
+	return true
+}
+
+func (h *Handler) finishFullExport() {
+	h.mu.Lock()
+	h.fullExportBusy = false
+	h.mu.Unlock()
 }
 
 func mergeExportStats(a, b service.ExportStats) service.ExportStats {
