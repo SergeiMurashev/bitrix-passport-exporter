@@ -31,7 +31,7 @@ func NewExporter(client *bitrix.Client) *Exporter {
 	return &Exporter{bitrix: client}
 }
 
-func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, projectField string) ([]model.TaskRow, ExportStats, []string, error) {
+func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, projectField string, allowTitleFallback bool) ([]model.TaskRow, ExportStats, []string, error) {
 	userCache := map[int]string{}
 	userMu := sync.Mutex{}
 	var tasks []model.TaskRow
@@ -72,7 +72,7 @@ func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, 
 		}
 
 		if len(projectTasks) == 0 {
-			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(ctx, p, projectField)
+			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(ctx, p, projectField, allowTitleFallback)
 			if resolveErr != nil {
 				if bitrix.IsAuthError(resolveErr) {
 					return fmt.Errorf("bitrix webhook auth failed: %w", resolveErr)

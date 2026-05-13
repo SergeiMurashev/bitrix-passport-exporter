@@ -98,25 +98,79 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(projects) == 0 {
+	if len(projects) == 0 && sourceLabel != "bitrix_api" {
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
 	log.Printf("export request: source=%s deals=%d project_field=%s deal_ids=%v", sourceLabel, len(projects), projectField, dealIDs)
 
 	svc := service.NewExporter(bClient)
+	isFullBitrixExport := sourceLabel == "bitrix_api"
+	exportTimeout := 12 * time.Minute
+	allowTitleFallback := true
+	if isFullBitrixExport {
+		// Полный экспорт по тысячам сделок: даем больше времени и отключаем дорогой fallback поиска проекта по названию.
+		exportTimeout = 35 * time.Minute
+		allowTitleFallback = false
+	}
 	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
 	// В противном случае прерывания загрузки/выгрузки отменяют вызовы Битрикса в процессе выполнения.
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), exportTimeout)
 	defer cancel()
-	tasks, stats, issues, err := svc.BuildTasks(ctx, projects, projectField)
-	if err != nil {
-		if strings.Contains(err.Error(), "webhook auth failed") {
-			http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+	var (
+		tasks  []model.TaskRow
+		stats  service.ExportStats
+		issues []string
+	)
+	if isFullBitrixExport {
+		const pageSize = 200
+		start := 0
+		processed := 0
+		var allProjects []model.ProjectRow
+		for {
+			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
+			if pageErr != nil {
+				http.Error(w, "failed to load deals page: "+pageErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			if len(page.Rows) == 0 {
+				break
+			}
+			chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, page.Rows, projectField, allowTitleFallback)
+			if chunkErr != nil {
+				if strings.Contains(chunkErr.Error(), "webhook auth failed") {
+					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+					return
+				}
+				http.Error(w, "failed to collect tasks: "+chunkErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			allProjects = append(allProjects, page.Rows...)
+			tasks = append(tasks, chunkTasks...)
+			issues = append(issues, chunkIssues...)
+			stats = mergeExportStats(stats, chunkStats)
+			processed += len(page.Rows)
+			log.Printf("export progress: deals_processed=%d tasks_total=%d next=%d", processed, len(tasks), page.Next)
+			if page.Next == 0 || page.Next <= start {
+				break
+			}
+			start = page.Next
+		}
+		for i := range allProjects {
+			allProjects[i].Seq = i + 1
+		}
+		projects = allProjects
+	} else {
+		var callErr error
+		tasks, stats, issues, callErr = svc.BuildTasks(ctx, projects, projectField, allowTitleFallback)
+		if callErr != nil {
+			if strings.Contains(callErr.Error(), "webhook auth failed") {
+				http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+				return
+			}
+			http.Error(w, "failed to collect tasks: "+callErr.Error(), http.StatusInternalServerError)
 			return
 		}
-		http.Error(w, "failed to collect tasks: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 	log.Printf(
 		"export stats: deals_total=%d deals_with_project=%d deals_without_project=%d resolve_errors=%d projects_with_tasks=%d projects_without_tasks=%d task_load_errors=%d tasks_total=%d",
@@ -143,6 +197,18 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result)
+}
+
+func mergeExportStats(a, b service.ExportStats) service.ExportStats {
+	a.DealsTotal += b.DealsTotal
+	a.DealsWithProject += b.DealsWithProject
+	a.DealsWithoutProject += b.DealsWithoutProject
+	a.DealsResolveErrors += b.DealsResolveErrors
+	a.ProjectsWithTasks += b.ProjectsWithTasks
+	a.ProjectsWithoutTasks += b.ProjectsWithoutTasks
+	a.TasksTotal += b.TasksTotal
+	a.TaskLoadErrors += b.TaskLoadErrors
+	return a
 }
 
 func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +289,10 @@ func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealIDs 
 
 	if err != nil && err != http.ErrMissingFile {
 		return nil, "", fmt.Errorf("invalid file field: %w", err)
+	}
+	if len(dealIDs) == 0 {
+		// Для полного экспорта сделки будут загружены чанками в основном обработчике.
+		return nil, "bitrix_api", nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -366,7 +436,7 @@ const indexHTML = `<!doctype html>
       function setWorkingState() {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Формируем...';
-        progressStatus.textContent = 'Генерируем паспорт проекта и подтягиваем задачи из Bitrix24. Это может занять 1-3 минуты.';
+        progressStatus.textContent = 'Генерируем паспорт проекта и подтягиваем задачи из Bitrix24. Это может занять некоторое время.';
         progressStatus.className = 'status work';
       }
 

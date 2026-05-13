@@ -32,6 +32,12 @@ type DealField struct {
 	Type  string `json:"type"`
 }
 
+type DealsPage struct {
+	Rows  []model.ProjectRow
+	Next  int
+	Total int
+}
+
 const (
 	dealFieldIndustryRange   = "UF_CRM_1744702843092"
 	dealFieldIndustry        = "UF_CRM_1744702862817"
@@ -67,12 +73,12 @@ func NewFromWebhook(webhook string) (*Client, error) {
 	return &Client{
 		endpoint: endpoint,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 90 * time.Second,
 		},
 	}, nil
 }
 
-func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, projectField string) (int, string, error) {
+func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, projectField string, allowTitleFallback bool) (int, string, error) {
 	if p.ProjectID > 0 {
 		return p.ProjectID, "deal." + projectField, nil
 	}
@@ -86,6 +92,10 @@ func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, 
 		} else if IsAuthError(err) {
 			return 0, "", err
 		}
+	}
+
+	if !allowTitleFallback {
+		return 0, "", nil
 	}
 
 	resp, err := c.callWithRetry(ctx, "sonet_group.get", map[string]any{
@@ -110,6 +120,53 @@ func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, 
 		return c.GetDealsByIDs(ctx, []int{dealID})
 	}
 	return c.GetDealsByIDs(ctx, nil)
+}
+
+func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsPage, error) {
+	enumLabels, _ := c.loadEnumLabels(ctx)
+	if limit <= 0 {
+		limit = 200
+	}
+	resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
+		"select": []string{
+			"ID",
+			"TITLE",
+			"STAGE_ID",
+			"COMMENTS",
+			"UF_CRM_PROJECT_GROUP_ID",
+			"UF_CRM_1739951854",
+			dealFieldIndustryRange,
+			dealFieldIndustry,
+			dealFieldSupportMeasure,
+			dealFieldMunicipality,
+			dealFieldInvestor,
+			dealFieldDescription,
+			dealFieldJobsPlan,
+			dealFieldAddress,
+			dealFieldIdentifier,
+			dealFieldInvestTotalPlan,
+			dealFieldOwnPlan,
+			dealFieldLoanPlan,
+			"BEGINDATE",
+			"CLOSEDATE",
+		},
+		"order": map[string]string{"ID": "ASC"},
+		"start": start,
+	})
+	if err != nil {
+		return DealsPage{}, err
+	}
+	items := toSliceMap(resp.Result)
+	rows := make([]model.ProjectRow, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, mapDealToProjectRow(item, enumLabels))
+	}
+	next := toInt(fmt.Sprintf("%v", resp.Next))
+	total := 0
+	if m, ok := resp.Result.(map[string]any); ok {
+		_ = m
+	}
+	return DealsPage{Rows: rows, Next: next, Total: total}, nil
 }
 
 func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectRow, error) {
@@ -596,7 +653,7 @@ func (c *Client) callWithRetry(ctx context.Context, method string, params map[st
 			return resp, nil
 		}
 		lastErr = err
-		if IsAuthError(err) || !isRateLimitError(err) || attempt == maxAttempts {
+		if IsAuthError(err) || (!isRateLimitError(err) && !isTransientError(err)) || attempt == maxAttempts {
 			return nil, err
 		}
 		select {
@@ -676,6 +733,18 @@ func isRateLimitError(err error) bool {
 	}
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "query_limit_exceeded") || strings.Contains(s, "too many requests")
+}
+
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "i/o timeout") ||
+		strings.Contains(s, "timeout awaiting response headers") ||
+		strings.Contains(s, "connection reset by peer") ||
+		strings.Contains(s, "temporary failure")
 }
 
 func toSliceMap(v any) []map[string]any {
