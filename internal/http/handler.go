@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/export"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/parser"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/service"
 )
@@ -65,29 +67,28 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	projectField := projectFieldCode
 
-	file, fh, err := r.FormFile("file")
+	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		http.Error(w, "file is required: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
 
-	projects, err := parser.ParseDealsInput(file)
+	dealID, err := parseOptionalDealID(r.FormValue("deal_id"))
 	if err != nil {
-		http.Error(w, "failed to parse input: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	projects, sourceLabel, err := h.loadProjects(r, bClient, dealID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(projects) == 0 {
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
-	log.Printf("export request: file=%q deals=%d project_field=%s", fh.Filename, len(projects), projectField)
-
-	bClient, err := bitrix.NewFromWebhook(webhook)
-	if err != nil {
-		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
-		return
-	}
+	log.Printf("export request: source=%s deals=%d project_field=%s deal_id=%d", sourceLabel, len(projects), projectField, dealID)
 
 	svc := service.NewExporter(bClient)
 	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
@@ -123,21 +124,67 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	filename := buildDownloadFilename(fh.Filename)
+	filename := buildDownloadFilename(sourceLabel, dealID)
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result)
 }
 
-func buildDownloadFilename(src string) string {
+func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealID int) ([]model.ProjectRow, string, error) {
+	file, fh, err := r.FormFile("file")
+	if err == nil {
+		defer file.Close()
+		projects, parseErr := parser.ParseDealsInput(file)
+		if parseErr != nil {
+			return nil, "", fmt.Errorf("failed to parse input: %w", parseErr)
+		}
+		return projects, fh.Filename, nil
+	}
+
+	if err != nil && err != http.ErrMissingFile {
+		return nil, "", fmt.Errorf("invalid file field: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	projects, err := bClient.GetDeals(ctx, dealID)
+	if err != nil {
+		if bitrix.IsAuthError(err) {
+			return nil, "", fmt.Errorf("bitrix webhook is invalid or expired")
+		}
+		return nil, "", fmt.Errorf("failed to load deals from bitrix: %w", err)
+	}
+	label := "bitrix_api"
+	if dealID > 0 {
+		label = fmt.Sprintf("bitrix_deal_%d", dealID)
+	}
+	return projects, label, nil
+}
+
+func parseOptionalDealID(v string) (int, error) {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return 0, nil
+	}
+	id, err := strconv.Atoi(s)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("deal_id must be a positive integer")
+	}
+	return id, nil
+}
+
+func buildDownloadFilename(src string, dealID int) string {
 	base := strings.TrimSpace(src)
 	base = strings.TrimSuffix(base, ".xlsx")
 	base = strings.TrimSuffix(base, ".xls")
 	base = strings.TrimSuffix(base, ".html")
 	base = sanitizeASCII(base)
 	if base == "" {
-		base = "deals_export"
+		base = "bitrix_export"
+	}
+	if dealID > 0 {
+		base = fmt.Sprintf("deal_%d", dealID)
 	}
 	return base + "_passport_and_tasks.xlsx"
 }
@@ -178,11 +225,15 @@ const indexHTML = `<!doctype html>
 <body>
   <div class="card">
     <h1>Выгрузка “Паспорта проекта” + задач</h1>
-    <p>Загрузите файл сделок из Bitrix24 и получите итоговый XLSX.</p>
+    <p>Можно загрузить файл сделок, либо сформировать сразу из Bitrix24 по webhook.</p>
     <form id="exportForm" method="post" action="/api/export" enctype="multipart/form-data">
-      <label for="file">Файл выгрузки сделок (.xls/.xlsx/.html)</label>
-      <input id="file" name="file" type="file" required>
-      <div id="fileStatus" class="status muted">Файл не выбран.</div>
+      <label for="deal_id">ID сделки (необязательно)</label>
+      <input id="deal_id" name="deal_id" type="text" inputmode="numeric" placeholder="Например, 12345">
+      <div class="hint">Если заполнить, сформируем отчет только по одной сделке. Если не заполнить и не выбрать файл, возьмем все сделки из Bitrix24.</div>
+
+      <label for="file">Файл выгрузки сделок (.xls/.xlsx/.html, необязательно)</label>
+      <input id="file" name="file" type="file">
+      <div id="fileStatus" class="status muted">Файл не выбран: будет использован прямой запрос в Bitrix24.</div>
 
       <div class="hint">Webhook берется из конфигурации сервера (BITRIX_WEBHOOK_URL).</div>
 
@@ -204,7 +255,7 @@ const indexHTML = `<!doctype html>
           fileStatus.textContent = 'Выбран файл: ' + file.name;
           fileStatus.className = 'status';
         } else {
-          fileStatus.textContent = 'Файл не выбран.';
+          fileStatus.textContent = 'Файл не выбран: будет использован прямой запрос в Bitrix24.';
           fileStatus.className = 'status muted';
         }
       });
@@ -241,11 +292,6 @@ const indexHTML = `<!doctype html>
 
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
-        if (!fileInput.files || fileInput.files.length === 0) {
-          fileStatus.textContent = 'Сначала выберите файл.';
-          fileStatus.className = 'status';
-          return;
-        }
         setWorkingState();
         try {
           const formData = new FormData(form);

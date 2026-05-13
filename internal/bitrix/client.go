@@ -76,6 +76,59 @@ func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, 
 	return toInt(fmt.Sprintf("%v", groups[0]["ID"])), "sonet_group.get(NAME)", nil
 }
 
+func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, error) {
+	if dealID > 0 {
+		resp, err := c.callWithRetry(ctx, "crm.deal.get", map[string]any{"id": dealID})
+		if err != nil {
+			return nil, err
+		}
+		deal, _ := resp.Result.(map[string]any)
+		if len(deal) == 0 {
+			return nil, nil
+		}
+		return []model.ProjectRow{mapDealToProjectRow(deal)}, nil
+	}
+
+	start := 0
+	var out []model.ProjectRow
+	for {
+		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
+			"select": []string{
+				"ID",
+				"TITLE",
+				"STAGE_ID",
+				"COMMENTS",
+				"UF_CRM_PROJECT_GROUP_ID",
+				"UF_CRM_1739951854", // fallback: field from XLS export often used as "Ход реализации проекта"
+			},
+			"order": map[string]string{"ID": "ASC"},
+			"start": start,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		items := toSliceMap(resp.Result)
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			out = append(out, mapDealToProjectRow(item))
+		}
+
+		next := toInt(fmt.Sprintf("%v", resp.Next))
+		if next == 0 {
+			break
+		}
+		start = next
+	}
+
+	for i := range out {
+		out[i].Seq = i + 1
+	}
+	return out, nil
+}
+
 func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string]any, error) {
 	start := 0
 	var all []map[string]any
@@ -324,6 +377,21 @@ func anyMapGet(m map[string]any, keys ...string) any {
 		}
 	}
 	return nil
+}
+
+func mapDealToProjectRow(deal map[string]any) model.ProjectRow {
+	stage := strings.TrimSpace(toString(anyMapGet(deal, "STAGE_ID", "stageId")))
+	progress := strings.TrimSpace(toString(anyMapGet(deal, "UF_CRM_1739951854")))
+	if progress == "" {
+		progress = strings.TrimSpace(toString(anyMapGet(deal, "COMMENTS", "comments")))
+	}
+
+	return model.ProjectRow{
+		DealID:       toInt(toString(anyMapGet(deal, "ID", "id"))),
+		DealTitle:    strings.TrimSpace(toString(anyMapGet(deal, "TITLE", "title"))),
+		ProjectStage: stage,
+		Progress:     progress,
+	}
 }
 
 func taskBoundToDeal(task map[string]any, binding string) bool {

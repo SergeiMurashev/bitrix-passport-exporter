@@ -17,6 +17,9 @@
 - UI в браузере: `GET /`
 - Healthcheck: `GET /healthz`
 - Export endpoint: `POST /api/export`
+- Источник сделок:
+  - прямой импорт из Bitrix24 API (по webhook, без пользовательского файла)
+  - совместимый fallback: загрузка файла `.xlsx` или html-xls
 - Для каждой сделки:
   - поиск проекта по `UF_CRM_PROJECT_GROUP_ID` (fallback по названию)
   - выгрузка задач проекта (`tasks.task.list`) с пагинацией
@@ -44,12 +47,27 @@ go run ./cmd/server
 
 ## API
 `POST /api/export` (`multipart/form-data`):
-- `file` — файл выгрузки сделок (`.xlsx` или html-xls)
+- `deal_id` (опционально) — сформировать только по одной сделке
+- `file` (опционально) — файл выгрузки сделок (`.xlsx` или html-xls)
+- если `file` не передан, сделки будут загружены напрямую из Bitrix24 API
 - код поля связи сделка → проект фиксирован в backend: `UF_CRM_PROJECT_GROUP_ID`
 
 Пример:
 ```bash
 curl -X POST 'http://localhost:8080/api/export' \
   -F 'file=@/absolute/path/deals.xls' \
+  --output passport_tasks.xlsx
+```
+
+Пример без файла (все сделки из Bitrix):
+```bash
+curl -X POST 'http://localhost:8080/api/export' \
+  --output passport_tasks.xlsx
+```
+
+Пример без файла (одна сделка):
+```bash
+curl -X POST 'http://localhost:8080/api/export' \
+  -F 'deal_id=12345' \
   --output passport_tasks.xlsx
 ```
