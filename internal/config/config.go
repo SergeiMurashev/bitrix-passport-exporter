@@ -2,22 +2,28 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	Addr    string
-	Webhook string
+	Addr         string
+	Webhook      string
+	TaskWorkers  int
+	TaskStrategy string
 }
 
 func Load() Config {
 	loadDotEnvIfPresent()
 
 	return Config{
-		Addr:    env("ADDR", ":25504"),
-		Webhook: env("BITRIX_WEBHOOK_URL", ""),
+		Addr:         env("ADDR", ":25504"),
+		Webhook:      env("BITRIX_WEBHOOK_URL", ""),
+		TaskWorkers:  envInt("TASK_WORKERS", 10),
+		TaskStrategy: env("TASK_STRATEGY", "per_deal"),
 	}
 }
 
@@ -60,4 +66,17 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		fmt.Printf("invalid %s=%q; using default %d\n", key, v, fallback)
+		return fallback
+	}
+	return n
 }

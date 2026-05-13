@@ -116,7 +116,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("export request: source=%s deals=%d project_field=%s deal_ids=%v", sourceLabel, len(projects), projectField, dealIDs)
 
-	svc := service.NewExporter(bClient)
+	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
 	isFullBitrixExport := sourceLabel == "bitrix_api"
 	exportTimeout := 12 * time.Minute
 	allowTitleFallback := true
@@ -160,25 +160,41 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		log.Printf("export phase=passport finished deals_total=%d", len(allProjects))
 
 		log.Printf("export phase=tasks started deals_total=%d", len(allProjects))
-		for i := 0; i < len(allProjects); i += pageSize {
-			end := i + pageSize
-			if end > len(allProjects) {
-				end = len(allProjects)
-			}
-			chunk := allProjects[i:end]
-			chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, projectField, allowTitleFallback)
-			if chunkErr != nil {
-				if strings.Contains(chunkErr.Error(), "webhook auth failed") {
+		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
+			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, projectField, allowTitleFallback)
+			if allErr != nil {
+				if strings.Contains(allErr.Error(), "webhook auth failed") {
 					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
 					return
 				}
-				http.Error(w, "failed to collect tasks: "+chunkErr.Error(), http.StatusInternalServerError)
+				http.Error(w, "failed to collect tasks: "+allErr.Error(), http.StatusInternalServerError)
 				return
 			}
-			tasks = append(tasks, chunkTasks...)
-			issues = append(issues, chunkIssues...)
-			stats = mergeExportStats(stats, chunkStats)
-			log.Printf("export progress phase=tasks deals_processed=%d tasks_total=%d", end, len(tasks))
+			tasks = allTasks
+			issues = allIssues
+			stats = mergeExportStats(stats, allStats)
+			log.Printf("export progress phase=tasks deals_processed=%d tasks_total=%d", len(allProjects), len(tasks))
+		} else {
+			for i := 0; i < len(allProjects); i += pageSize {
+				end := i + pageSize
+				if end > len(allProjects) {
+					end = len(allProjects)
+				}
+				chunk := allProjects[i:end]
+				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, projectField, allowTitleFallback)
+				if chunkErr != nil {
+					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
+						http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+						return
+					}
+					http.Error(w, "failed to collect tasks: "+chunkErr.Error(), http.StatusInternalServerError)
+					return
+				}
+				tasks = append(tasks, chunkTasks...)
+				issues = append(issues, chunkIssues...)
+				stats = mergeExportStats(stats, chunkStats)
+				log.Printf("export progress phase=tasks deals_processed=%d tasks_total=%d", end, len(tasks))
+			}
 		}
 		log.Printf("export phase=tasks finished tasks_total=%d", len(tasks))
 

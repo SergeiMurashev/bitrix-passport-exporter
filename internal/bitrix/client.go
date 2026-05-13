@@ -585,6 +585,44 @@ func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any
 	return merged, nil
 }
 
+func (c *Client) GetAllTasks(ctx context.Context) ([]map[string]any, error) {
+	start := 0
+	const maxPages = 10000
+	page := 0
+	var all []map[string]any
+
+	for {
+		page++
+		if page > maxPages {
+			return nil, fmt.Errorf("all tasks pagination exceeded %d pages", maxPages)
+		}
+		resp, err := c.callWithRetry(ctx, "tasks.task.list", map[string]any{
+			"select": []string{"ID", "TITLE", "RESPONSIBLE_ID", "DEADLINE", "STATUS", "DESCRIPTION", "UF_CRM_TASK", "CRM_BINDING", "GROUP_ID"},
+			"start":  start,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		resultMap, _ := resp.Result.(map[string]any)
+		chunk := toSliceMap(resultMap["tasks"])
+		if len(chunk) == 0 {
+			chunk = toSliceMap(resultMap["items"])
+		}
+		all = append(all, chunk...)
+
+		next := toInt(toString(resp.Next))
+		if next == 0 {
+			next = toInt(fmt.Sprintf("%v", resultMap["next"]))
+		}
+		if next == 0 || next <= start || len(chunk) == 0 {
+			break
+		}
+		start = next
+	}
+	return all, nil
+}
+
 func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
 	start := 0
 	const maxPages = 10000
@@ -612,7 +650,10 @@ func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([
 		}
 		all = append(all, chunk...)
 
-		next := toInt(fmt.Sprintf("%v", resultMap["next"]))
+		next := toInt(toString(resp.Next))
+		if next == 0 {
+			next = toInt(fmt.Sprintf("%v", resultMap["next"]))
+		}
 		if next == 0 || next <= start || len(chunk) == 0 {
 			break
 		}
@@ -745,6 +786,10 @@ func isTransientError(err error) bool {
 		strings.Contains(s, "timeout awaiting response headers") ||
 		strings.Contains(s, "connection reset by peer") ||
 		strings.Contains(s, "temporary failure")
+}
+
+func IsTimeoutError(err error) bool {
+	return isTransientError(err)
 }
 
 func toSliceMap(v any) []map[string]any {

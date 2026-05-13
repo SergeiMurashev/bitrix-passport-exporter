@@ -34,11 +34,15 @@
 Через переменные окружения:
 - `ADDR` — адрес сервера (по умолчанию `:8080`)
 - `BITRIX_WEBHOOK_URL` — webhook Bitrix24 (обязательный)
+- `TASK_WORKERS` — количество параллельных воркеров для выгрузки задач (по умолчанию `10`)
+- `TASK_STRATEGY` — стратегия сбора задач: `per_deal` или `bulk` (по умолчанию `per_deal`)
 
 Пример:
 ```bash
 export ADDR=:8080
 export BITRIX_WEBHOOK_URL='https://<portal>.bitrix24.ru/rest/<user_id>/<webhook_key>/'
+export TASK_WORKERS=10
+export TASK_STRATEGY=bulk
 ```
 
 ## Запуск
