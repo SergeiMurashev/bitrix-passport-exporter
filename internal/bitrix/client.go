@@ -112,7 +112,7 @@ func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any
 		return nil, nil
 	}
 
-	// Bitrix portals vary: some use UF_CRM_TASK, some rely on CRM binding filters.
+	// Bitrix Portal различаются: некоторые используют UF_CRM_TASK, некоторые полагаются на фильтры привязки CRM.
 	variants := []map[string]any{
 		{"UF_CRM_TASK": fmt.Sprintf("D_%d", dealID)},
 		{"CRM_BINDING": fmt.Sprintf("D_%d", dealID)},

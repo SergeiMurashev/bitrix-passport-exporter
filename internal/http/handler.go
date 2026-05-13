@@ -90,8 +90,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := service.NewExporter(bClient)
-	// Do not bind long export to request cancellation from browser/client.
-	// Otherwise upload/download interruptions cancel Bitrix calls mid-flight.
+	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
+	// В противном случае прерывания загрузки/выгрузки отменяют вызовы Битрикса в процессе выполнения.
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	tasks, stats, issues, err := svc.BuildTasks(ctx, projects, projectField)
