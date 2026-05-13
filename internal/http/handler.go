@@ -332,7 +332,7 @@ const indexHTML = `<!doctype html>
     <form id="exportForm" method="post" action="/api/export" enctype="multipart/form-data">
       <label for="deal_ids">ID сделок CRM (необязательно)</label>
       <input id="deal_ids" name="deal_ids" type="text" inputmode="text" placeholder="Например, 74331,74332,74333">
-      <div class="hint">Указывать CRM ID из URL сделки. Можно один ID или несколько через запятую. Если поле пустое и файл не выбран, выгружаем все сделки.</div>
+      <div class="hint">Указывать CRM ID из URL сделки: /crm/deal/details/74331/ → 74331. Значения из колонки "Идентификатор" (например 111, 222) обычно не подходят. Можно один ID или несколько через запятую.</div>
 
       <label for="file">Файл выгрузки сделок (.xls/.xlsx/.html, необязательно)</label>
       <input id="file" name="file" type="file">
