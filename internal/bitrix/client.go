@@ -21,6 +21,17 @@ type Client struct {
 	http     *http.Client
 }
 
+type DealShort struct {
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+}
+
+type DealField struct {
+	Code  string `json:"code"`
+	Title string `json:"title"`
+	Type  string `json:"type"`
+}
+
 type bitrixResponse struct {
 	Result any    `json:"result"`
 	Next   any    `json:"next"`
@@ -47,6 +58,9 @@ func NewFromWebhook(webhook string) (*Client, error) {
 }
 
 func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, projectField string) (int, string, error) {
+	if p.ProjectID > 0 {
+		return p.ProjectID, "deal." + projectField, nil
+	}
 	if p.DealID > 0 {
 		resp, err := c.callWithRetry(ctx, "crm.deal.get", map[string]any{"id": p.DealID})
 		if err == nil {
@@ -78,20 +92,43 @@ func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, 
 
 func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, error) {
 	if dealID > 0 {
-		resp, err := c.callWithRetry(ctx, "crm.deal.get", map[string]any{"id": dealID})
-		if err != nil {
-			return nil, err
+		return c.GetDealsByIDs(ctx, []int{dealID})
+	}
+	return c.GetDealsByIDs(ctx, nil)
+}
+
+func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectRow, error) {
+	if len(ids) > 0 {
+		out := make([]model.ProjectRow, 0, len(ids))
+		for _, id := range ids {
+			if id <= 0 {
+				continue
+			}
+			resp, err := c.callWithRetry(ctx, "crm.deal.get", map[string]any{"id": id})
+			if err != nil {
+				return nil, err
+			}
+			deal, _ := resp.Result.(map[string]any)
+			if len(deal) == 0 {
+				continue
+			}
+			out = append(out, mapDealToProjectRow(deal))
 		}
-		deal, _ := resp.Result.(map[string]any)
-		if len(deal) == 0 {
-			return nil, nil
+		for i := range out {
+			out[i].Seq = i + 1
 		}
-		return []model.ProjectRow{mapDealToProjectRow(deal)}, nil
+		return out, nil
 	}
 
 	start := 0
+	const maxPages = 10000
+	page := 0
 	var out []model.ProjectRow
 	for {
+		page++
+		if page > maxPages {
+			return nil, fmt.Errorf("deals pagination exceeded %d pages", maxPages)
+		}
 		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
 			"select": []string{
 				"ID",
@@ -100,6 +137,8 @@ func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, 
 				"COMMENTS",
 				"UF_CRM_PROJECT_GROUP_ID",
 				"UF_CRM_1739951854", // fallback: field from XLS export often used as "Ход реализации проекта"
+				"BEGINDATE",
+				"CLOSEDATE",
 			},
 			"order": map[string]string{"ID": "ASC"},
 			"start": start,
@@ -117,7 +156,7 @@ func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, 
 		}
 
 		next := toInt(fmt.Sprintf("%v", resp.Next))
-		if next == 0 {
+		if next == 0 || next <= start {
 			break
 		}
 		start = next
@@ -129,11 +168,91 @@ func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, 
 	return out, nil
 }
 
+func (c *Client) ListDealIDs(ctx context.Context) ([]DealShort, error) {
+	start := 0
+	const maxPages = 10000
+	page := 0
+	out := make([]DealShort, 0, 256)
+
+	for {
+		page++
+		if page > maxPages {
+			return nil, fmt.Errorf("deals ids pagination exceeded %d pages", maxPages)
+		}
+
+		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
+			"select": []string{"ID", "TITLE"},
+			"order":  map[string]string{"ID": "ASC"},
+			"start":  start,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		items := toSliceMap(resp.Result)
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			id := toInt(toString(anyMapGet(item, "ID", "id")))
+			if id <= 0 {
+				continue
+			}
+			out = append(out, DealShort{
+				ID:    id,
+				Title: strings.TrimSpace(toString(anyMapGet(item, "TITLE", "title"))),
+			})
+		}
+
+		next := toInt(fmt.Sprintf("%v", resp.Next))
+		if next == 0 || next <= start {
+			break
+		}
+		start = next
+	}
+
+	return out, nil
+}
+
+func (c *Client) ListDealFields(ctx context.Context) ([]DealField, error) {
+	resp, err := c.callWithRetry(ctx, "crm.deal.fields", nil)
+	if err != nil {
+		return nil, err
+	}
+	fieldsMap, ok := resp.Result.(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	out := make([]DealField, 0, len(fieldsMap))
+	for code, raw := range fieldsMap {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		title := strings.TrimSpace(toString(item["title"]))
+		if title == "" {
+			title = strings.TrimSpace(toString(item["formLabel"]))
+		}
+		out = append(out, DealField{
+			Code:  code,
+			Title: title,
+			Type:  strings.TrimSpace(toString(item["type"])),
+		})
+	}
+	return out, nil
+}
+
 func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string]any, error) {
 	start := 0
+	const maxPages = 10000
+	page := 0
 	var all []map[string]any
 
 	for {
+		page++
+		if page > maxPages {
+			return nil, fmt.Errorf("project tasks pagination exceeded %d pages", maxPages)
+		}
 		resp, err := c.callWithRetry(ctx, "tasks.task.list", map[string]any{
 			"filter": map[string]any{"GROUP_ID": groupID},
 			"select": []string{"ID", "TITLE", "RESPONSIBLE_ID", "DEADLINE", "STATUS", "DESCRIPTION"},
@@ -151,7 +270,7 @@ func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string
 		all = append(all, chunk...)
 
 		next := toInt(fmt.Sprintf("%v", resultMap["next"]))
-		if next == 0 || len(chunk) == 0 {
+		if next == 0 || next <= start || len(chunk) == 0 {
 			break
 		}
 		start = next
@@ -201,9 +320,15 @@ func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any
 
 func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
 	start := 0
+	const maxPages = 10000
+	page := 0
 	var all []map[string]any
 
 	for {
+		page++
+		if page > maxPages {
+			return nil, fmt.Errorf("tasks pagination exceeded %d pages", maxPages)
+		}
 		resp, err := c.callWithRetry(ctx, "tasks.task.list", map[string]any{
 			"filter": filter,
 			"select": []string{"ID", "TITLE", "RESPONSIBLE_ID", "DEADLINE", "STATUS", "DESCRIPTION", "UF_CRM_TASK", "CRM_BINDING"},
@@ -221,7 +346,7 @@ func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([
 		all = append(all, chunk...)
 
 		next := toInt(fmt.Sprintf("%v", resultMap["next"]))
-		if next == 0 || len(chunk) == 0 {
+		if next == 0 || next <= start || len(chunk) == 0 {
 			break
 		}
 		start = next
@@ -304,19 +429,22 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any)
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http error %d: %s", resp.StatusCode, string(payload))
-	}
-
 	var out bitrixResponse
+	_ = json.Unmarshal(payload, &out)
+	if resp.StatusCode != http.StatusOK {
+		if out.Error != "" || out.Desc != "" {
+			return nil, fmt.Errorf("bitrix %s http %d: %s (%s)", method, resp.StatusCode, out.Error, out.Desc)
+		}
+		return nil, fmt.Errorf("bitrix %s http %d: %s", method, resp.StatusCode, string(payload))
+	}
 	if err := json.Unmarshal(payload, &out); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+		return nil, fmt.Errorf("decode response for %s: %w", method, err)
 	}
 	if out.Error != "" {
 		if out.Desc != "" {
-			return nil, fmt.Errorf("bitrix error: %s (%s)", out.Error, out.Desc)
+			return nil, fmt.Errorf("bitrix %s error: %s (%s)", method, out.Error, out.Desc)
 		}
-		return nil, fmt.Errorf("bitrix error: %s", out.Error)
+		return nil, fmt.Errorf("bitrix %s error: %s", method, out.Error)
 	}
 
 	return &out, nil
@@ -388,9 +516,19 @@ func mapDealToProjectRow(deal map[string]any) model.ProjectRow {
 
 	return model.ProjectRow{
 		DealID:       toInt(toString(anyMapGet(deal, "ID", "id"))),
+		ProjectID:    toInt(toString(anyMapGet(deal, "UF_CRM_PROJECT_GROUP_ID"))),
 		DealTitle:    strings.TrimSpace(toString(anyMapGet(deal, "TITLE", "title"))),
+		Description:  strings.TrimSpace(toString(anyMapGet(deal, "COMMENTS", "comments"))),
 		ProjectStage: stage,
 		Progress:     progress,
+		DateRange: strings.TrimSpace(strings.TrimSpace(toString(anyMapGet(deal, "BEGINDATE"))) +
+			func() string {
+				end := strings.TrimSpace(toString(anyMapGet(deal, "CLOSEDATE")))
+				if end == "" {
+					return ""
+				}
+				return " - " + end
+			}()),
 	}
 }
 

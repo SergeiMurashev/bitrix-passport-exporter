@@ -16,6 +16,8 @@
 ## Что реализовано
 - UI в браузере: `GET /`
 - Healthcheck: `GET /healthz`
+- Deals IDs endpoint: `GET /api/deals/ids`
+- Deal fields endpoint: `GET /api/deals/fields`
 - Export endpoint: `POST /api/export`
 - Источник сделок:
   - прямой импорт из Bitrix24 API (по webhook, без пользовательского файла)
@@ -46,8 +48,27 @@ go run ./cmd/server
 ```
 
 ## API
+`GET /api/deals/ids`:
+- возвращает список всех CRM сделок с полями `id` и `title`
+- удобно, чтобы взять правильный `deal_id` для точечной выгрузки
+
+Пример:
+```bash
+curl 'http://localhost:8080/api/deals/ids'
+```
+
+`GET /api/deals/fields`:
+- возвращает поля сделки (`code`, `title`, `type`)
+- нужно для сверки, какие `UF_CRM_*` маппить в паспорт
+
+Пример:
+```bash
+curl 'http://localhost:8080/api/deals/fields'
+```
+
 `POST /api/export` (`multipart/form-data`):
-- `deal_id` (опционально) — сформировать только по одной сделке
+- `deal_ids` (опционально) — один ID или несколько CRM ID через запятую
+- `deal_id` (опционально, legacy) — один CRM ID
 - `file` (опционально) — файл выгрузки сделок (`.xlsx` или html-xls)
 - если `file` не передан, сделки будут загружены напрямую из Bitrix24 API
 - код поля связи сделка → проект фиксирован в backend: `UF_CRM_PROJECT_GROUP_ID`
@@ -69,5 +90,12 @@ curl -X POST 'http://localhost:8080/api/export' \
 ```bash
 curl -X POST 'http://localhost:8080/api/export' \
   -F 'deal_id=12345' \
+  --output passport_tasks.xlsx
+```
+
+Пример без файла (несколько сделок):
+```bash
+curl -X POST 'http://localhost:8080/api/export' \
+  -F 'deal_ids=12345,12346,12347' \
   --output passport_tasks.xlsx
 ```

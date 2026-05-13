@@ -4,6 +4,7 @@ type ProjectRow struct {
 	Seq          int
 	Section      string
 	DealID       int
+	ProjectID    int
 	DealTitle    string
 	Location     string
 	Investor     string

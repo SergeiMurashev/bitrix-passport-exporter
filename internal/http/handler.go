@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -30,6 +31,10 @@ func New(cfg config.Config) *Handler { return &Handler{cfg: cfg} }
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
 	mux.HandleFunc("/", h.ui)
+	// Сервисные вызовы
+	mux.HandleFunc("/api/deals/ids", h.dealIDs)
+	mux.HandleFunc("/api/deals/fields", h.dealFields)
+	// Основной вызов
 	mux.HandleFunc("/api/export", h.export)
 }
 
@@ -55,9 +60,17 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
-		return
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if strings.Contains(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	webhook := strings.TrimSpace(h.cfg.Webhook)
@@ -73,14 +86,15 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dealID, err := parseOptionalDealID(r.FormValue("deal_id"))
+	dealIDs, err := parseDealIDs(r.FormValue("deal_ids"), r.FormValue("deal_id"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	projects, sourceLabel, err := h.loadProjects(r, bClient, dealID)
+	projects, sourceLabel, err := h.loadProjects(r, bClient, dealIDs)
 	if err != nil {
+		log.Printf("export load projects failed: deal_ids=%v err=%v", dealIDs, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -88,7 +102,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
-	log.Printf("export request: source=%s deals=%d project_field=%s deal_id=%d", sourceLabel, len(projects), projectField, dealID)
+	log.Printf("export request: source=%s deals=%d project_field=%s deal_ids=%v", sourceLabel, len(projects), projectField, dealIDs)
 
 	svc := service.NewExporter(bClient)
 	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
@@ -124,14 +138,79 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	filename := buildDownloadFilename(sourceLabel, dealID)
+	filename := buildDownloadFilename(sourceLabel, dealIDs)
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result)
 }
 
-func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealID int) ([]model.ProjectRow, string, error) {
+func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	webhook := strings.TrimSpace(h.cfg.Webhook)
+	if webhook == "" {
+		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
+		return
+	}
+
+	bClient, err := bitrix.NewFromWebhook(webhook)
+	if err != nil {
+		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	deals, err := bClient.ListDealIDs(ctx)
+	if err != nil {
+		log.Printf("deal ids load failed: err=%v", err)
+		http.Error(w, "failed to load deal ids: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"count": len(deals),
+		"deals": deals,
+	})
+}
+
+func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	webhook := strings.TrimSpace(h.cfg.Webhook)
+	if webhook == "" {
+		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
+		return
+	}
+	bClient, err := bitrix.NewFromWebhook(webhook)
+	if err != nil {
+		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	fields, err := bClient.ListDealFields(ctx)
+	if err != nil {
+		log.Printf("deal fields load failed: err=%v", err)
+		http.Error(w, "failed to load deal fields: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"count":  len(fields),
+		"fields": fields,
+	})
+}
+
+func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]model.ProjectRow, string, error) {
 	file, fh, err := r.FormFile("file")
 	if err == nil {
 		defer file.Close()
@@ -148,7 +227,7 @@ func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealID i
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	projects, err := bClient.GetDeals(ctx, dealID)
+	projects, err := bClient.GetDealsByIDs(ctx, dealIDs)
 	if err != nil {
 		if bitrix.IsAuthError(err) {
 			return nil, "", fmt.Errorf("bitrix webhook is invalid or expired")
@@ -156,25 +235,46 @@ func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealID i
 		return nil, "", fmt.Errorf("failed to load deals from bitrix: %w", err)
 	}
 	label := "bitrix_api"
-	if dealID > 0 {
-		label = fmt.Sprintf("bitrix_deal_%d", dealID)
+	if len(dealIDs) == 1 {
+		label = fmt.Sprintf("bitrix_deal_%d", dealIDs[0])
+	}
+	if len(dealIDs) > 1 {
+		label = fmt.Sprintf("bitrix_deals_%d", len(dealIDs))
 	}
 	return projects, label, nil
 }
 
-func parseOptionalDealID(v string) (int, error) {
-	s := strings.TrimSpace(v)
-	if s == "" {
-		return 0, nil
+func parseDealIDs(dealIDsRaw, dealIDRaw string) ([]int, error) {
+	parts := make([]string, 0, 8)
+	if strings.TrimSpace(dealIDsRaw) != "" {
+		parts = append(parts, strings.Split(dealIDsRaw, ",")...)
+	} else if strings.TrimSpace(dealIDRaw) != "" {
+		parts = append(parts, strings.TrimSpace(dealIDRaw))
 	}
-	id, err := strconv.Atoi(s)
-	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("deal_id must be a positive integer")
+	if len(parts) == 0 {
+		return nil, nil
 	}
-	return id, nil
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		s := strings.TrimSpace(p)
+		if s == "" {
+			continue
+		}
+		id, err := strconv.Atoi(s)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("deal_ids must contain positive integers, got %q", s)
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
-func buildDownloadFilename(src string, dealID int) string {
+func buildDownloadFilename(src string, dealIDs []int) string {
 	base := strings.TrimSpace(src)
 	base = strings.TrimSuffix(base, ".xlsx")
 	base = strings.TrimSuffix(base, ".xls")
@@ -183,8 +283,11 @@ func buildDownloadFilename(src string, dealID int) string {
 	if base == "" {
 		base = "bitrix_export"
 	}
-	if dealID > 0 {
-		base = fmt.Sprintf("deal_%d", dealID)
+	if len(dealIDs) == 1 {
+		base = fmt.Sprintf("deal_%d", dealIDs[0])
+	}
+	if len(dealIDs) > 1 {
+		base = fmt.Sprintf("deals_%d", len(dealIDs))
 	}
 	return base + "_passport_and_tasks.xlsx"
 }
@@ -227,9 +330,9 @@ const indexHTML = `<!doctype html>
     <h1>Выгрузка “Паспорта проекта” + задач</h1>
     <p>Можно загрузить файл сделок, либо сформировать сразу из Bitrix24 по webhook.</p>
     <form id="exportForm" method="post" action="/api/export" enctype="multipart/form-data">
-      <label for="deal_id">ID сделки (необязательно)</label>
-      <input id="deal_id" name="deal_id" type="text" inputmode="numeric" placeholder="Например, 12345">
-      <div class="hint">Если заполнить, сформируем отчет только по одной сделке. Если не заполнить и не выбрать файл, возьмем все сделки из Bitrix24.</div>
+      <label for="deal_ids">ID сделок CRM (необязательно)</label>
+      <input id="deal_ids" name="deal_ids" type="text" inputmode="text" placeholder="Например, 74331,74332,74333">
+      <div class="hint">Указывать CRM ID из URL сделки. Можно один ID или несколько через запятую. Если поле пустое и файл не выбран, выгружаем все сделки.</div>
 
       <label for="file">Файл выгрузки сделок (.xls/.xlsx/.html, необязательно)</label>
       <input id="file" name="file" type="file">
