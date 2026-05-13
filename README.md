@@ -32,14 +32,14 @@
 
 ## Конфигурация
 Через переменные окружения:
-- `ADDR` — адрес сервера (по умолчанию `:8080`)
+- `ADDR` — адрес сервера (по умолчанию `:25504`)
 - `BITRIX_WEBHOOK_URL` — webhook Bitrix24 (обязательный)
 - `TASK_WORKERS` — количество параллельных воркеров для выгрузки задач (по умолчанию `10`)
 - `TASK_STRATEGY` — стратегия сбора задач: `per_deal` или `bulk` (по умолчанию `per_deal`)
 
 Пример:
 ```bash
-export ADDR=:8080
+export ADDR=:25504
 export BITRIX_WEBHOOK_URL='https://<portal>.bitrix24.ru/rest/<user_id>/<webhook_key>/'
 export TASK_WORKERS=10
 export TASK_STRATEGY=bulk
@@ -50,6 +50,49 @@ export TASK_STRATEGY=bulk
 cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter
 go run ./cmd/server
 ```
+
+## Docker
+Подготовка:
+```bash
+cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter
+cp .env.example .env
+```
+
+Заполнить в `.env`:
+- `BITRIX_WEBHOOK_URL` (обязательно)
+- при необходимости `TASK_WORKERS`, `TASK_STRATEGY`, `ADDR`
+
+Запуск:
+```bash
+docker compose up -d --build
+```
+
+Проверка:
+```bash
+curl http://localhost:25504/healthz
+```
+
+Остановка:
+```bash
+docker compose down
+```
+
+## Деплой На VDS
+1. Скопировать проект на сервер.
+2. Установить Docker + Docker Compose plugin.
+3. В корне проекта создать `.env`:
+```bash
+cp .env.example .env
+```
+4. Прописать `BITRIX_WEBHOOK_URL`.
+5. Запустить:
+```bash
+docker compose up -d --build
+```
+6. Открыть порт `25504/tcp` в firewall/security group.
+7. Проверить:
+- UI: `http://<VDS_IP>:25504/`
+- healthcheck: `http://<VDS_IP>:25504/healthz`
 
 ## API
 `GET /api/deals/ids`:

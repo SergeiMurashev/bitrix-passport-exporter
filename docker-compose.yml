@@ -1,0 +1,11 @@
+services:
+  bitrix-passport-exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitrix-passport-exporter
+    env_file:
+      - .env
+    ports:
+      - "25504:25504"
+    restart: unless-stopped
