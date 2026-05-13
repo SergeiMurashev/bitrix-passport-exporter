@@ -32,6 +32,11 @@ type DealField struct {
 	Type  string `json:"type"`
 }
 
+type stageMeta struct {
+	Name      string
+	Semantics string
+}
+
 type DealsPage struct {
 	Rows  []model.ProjectRow
 	Next  int
@@ -124,6 +129,7 @@ func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, 
 
 func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsPage, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
+	stageLabels, _ := c.loadDealStageMeta(ctx)
 	if limit <= 0 {
 		limit = 200
 	}
@@ -159,7 +165,7 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 	items := toSliceMap(resp.Result)
 	rows := make([]model.ProjectRow, 0, len(items))
 	for _, item := range items {
-		rows = append(rows, mapDealToProjectRow(item, enumLabels))
+		rows = append(rows, mapDealToProjectRow(item, enumLabels, stageLabels))
 	}
 	next := toInt(fmt.Sprintf("%v", resp.Next))
 	total := 0
@@ -171,6 +177,7 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 
 func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectRow, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
+	stageLabels, _ := c.loadDealStageMeta(ctx)
 
 	if len(ids) > 0 {
 		cleanIDs := make([]int, 0, len(ids))
@@ -230,7 +237,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 			}
 			items := toSliceMap(resp.Result)
 			for _, item := range items {
-				row := mapDealToProjectRow(item, enumLabels)
+				row := mapDealToProjectRow(item, enumLabels, stageLabels)
 				if row.DealID > 0 {
 					found[row.DealID] = struct{}{}
 				}
@@ -325,7 +332,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 			break
 		}
 		for _, item := range items {
-			out = append(out, mapDealToProjectRow(item, enumLabels))
+			out = append(out, mapDealToProjectRow(item, enumLabels, stageLabels))
 		}
 
 		next := toInt(fmt.Sprintf("%v", resp.Next))
@@ -343,6 +350,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 
 func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []int) ([]model.ProjectRow, map[int]struct{}, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
+	stageLabels, _ := c.loadDealStageMeta(ctx)
 	fields, err := c.ListDealFields(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -407,7 +415,7 @@ func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []
 		}
 		items := toSliceMap(resp.Result)
 		for _, item := range items {
-			row := mapDealToProjectRow(item, enumLabels)
+			row := mapDealToProjectRow(item, enumLabels, stageLabels)
 			if row.DealID <= 0 {
 				continue
 			}
@@ -831,8 +839,14 @@ func anyMapGet(m map[string]any, keys ...string) any {
 	return nil
 }
 
-func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]string) model.ProjectRow {
+func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]string, stageLabels map[string]stageMeta) model.ProjectRow {
 	stage := strings.TrimSpace(toString(anyMapGet(deal, "STAGE_ID", "stageId")))
+	stageName := stage
+	if meta, ok := stageLabels[stage]; ok {
+		if strings.TrimSpace(meta.Name) != "" {
+			stageName = strings.TrimSpace(meta.Name)
+		}
+	}
 	progress := strings.TrimSpace(toString(anyMapGet(deal, "UF_CRM_1739951854")))
 	if progress == "" {
 		progress = enumValue(enumLabels, dealFieldIndustry, toString(anyMapGet(deal, dealFieldIndustry)))
@@ -850,12 +864,13 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 
 	return model.ProjectRow{
 		DealID:       toInt(toString(anyMapGet(deal, "ID", "id"))),
+		Section:      firstNonEmpty(stageName, stage),
 		ProjectID:    toInt(toString(anyMapGet(deal, "UF_CRM_PROJECT_GROUP_ID"))),
 		DealTitle:    strings.TrimSpace(toString(anyMapGet(deal, "TITLE", "title"))),
 		Location:     location,
 		Investor:     strings.TrimSpace(toString(anyMapGet(deal, dealFieldInvestor))),
 		Description:  description,
-		ProjectStage: stage,
+		ProjectStage: stageName,
 		Progress:     progress,
 		Support:      enumValue(enumLabels, dealFieldSupportMeasure, toString(anyMapGet(deal, dealFieldSupportMeasure))),
 		DateRange: strings.TrimSpace(strings.TrimSpace(toString(anyMapGet(deal, "BEGINDATE"))) +
@@ -972,6 +987,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Client) loadDealStageMeta(ctx context.Context) (map[string]stageMeta, error) {
+	resp, err := c.callWithRetry(ctx, "crm.status.list", map[string]any{
+		"order": map[string]string{"SORT": "ASC"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := toSliceMap(resp.Result)
+	out := make(map[string]stageMeta, len(items))
+	for _, item := range items {
+		entityID := strings.TrimSpace(toString(anyMapGet(item, "ENTITY_ID", "entityId")))
+		if !strings.HasPrefix(strings.ToUpper(entityID), "DEAL_STAGE") {
+			continue
+		}
+		statusID := strings.TrimSpace(toString(anyMapGet(item, "STATUS_ID", "statusId")))
+		if statusID == "" {
+			continue
+		}
+		semantics := strings.TrimSpace(strings.ToLower(toString(anyMapGet(item, "SEMANTICS", "semantics"))))
+		if semantics == "" {
+			if extra, ok := anyMapGet(item, "EXTRA", "extra").(map[string]any); ok {
+				semantics = strings.TrimSpace(strings.ToLower(toString(anyMapGet(extra, "SEMANTICS", "semantics"))))
+			}
+		}
+		out[statusID] = stageMeta{
+			Name:      strings.TrimSpace(toString(anyMapGet(item, "NAME", "name"))),
+			Semantics: semantics,
+		}
+	}
+	return out, nil
 }
 
 func taskBoundToDeal(task map[string]any, binding string) bool {
