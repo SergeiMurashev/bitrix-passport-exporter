@@ -184,7 +184,7 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 				DealID:      p.DealID,
 				DealTitle:   p.DealTitle,
 				ProjectID:   projectID,
-				LinkSource:  source,
+				LinkSource:  humanizeLinkSource(source),
 				TaskID:      toString(anyMapGet(t, "id", "ID")),
 				TaskTitle:   toString(anyMapGet(t, "title", "TITLE")),
 				Responsible: responsible,
@@ -347,7 +347,7 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []model.ProjectR
 					DealID:      d.DealID,
 					DealTitle:   d.DealTitle,
 					ProjectID:   0,
-					LinkSource:  "deal.binding",
+					LinkSource:  humanizeLinkSource("deal.binding"),
 					TaskID:      toString(anyMapGet(t, "id", "ID")),
 					TaskTitle:   toString(anyMapGet(t, "title", "TITLE")),
 					Responsible: responsible,
@@ -439,13 +439,27 @@ func mergeTaskPools(a, b []map[string]any) []map[string]any {
 func detectLinkSource(task map[string]any, dealID int, projectID int, projectField string) string {
 	for _, d := range extractDealBindings(task) {
 		if d == dealID {
-			return "deal.binding"
+			return humanizeLinkSource("deal.binding")
 		}
 	}
 	if projectID > 0 {
-		return "deal." + projectField
+		return humanizeLinkSource("deal." + projectField)
 	}
-	return "deal.binding"
+	return humanizeLinkSource("deal.binding")
+}
+
+func humanizeLinkSource(source string) string {
+	s := strings.TrimSpace(strings.ToLower(source))
+	switch {
+	case s == "deal.binding":
+		return "Связь через сделку"
+	case strings.HasPrefix(s, "deal."):
+		return "Связь через проект, привязанный к сделке"
+	case strings.HasPrefix(s, "sonet_group.get"):
+		return "Связь через проект по названию сделки"
+	default:
+		return "Связь через сделку"
+	}
 }
 
 func taskStatus(code int) string {
