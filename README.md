@@ -1,148 +1,56 @@
 # bitrix-passport-exporter
 
-Мини-сервер на Go для выгрузки "Паспорта проекта" из Bitrix24 с задачами по сделкам.
+Сервис выгрузки “Паспорта проекта” и задач из Bitrix24.
 
-## Архитектура
-Структура проекта в backend-стиле (`cmd` + `internal`):
-- `cmd/server` — entrypoint приложения
-- `internal/http` — HTTP-роуты и обработчики
-- `internal/service` — бизнес-логика экспорта
-- `internal/bitrix` — клиент Bitrix24 (через `bixgo`)
-- `internal/parser` — парсинг входной выгрузки (`.xlsx` и html-xls)
-- `internal/export` — сборка итогового XLSX
-- `internal/model` — доменные модели
-- `internal/config` — конфиг окружения
+## Структура
+- `backend/` — Go API + XLSX сборка
+- `frontend/` — TS (React + Vite) web-интерфейс
 
-## Что реализовано
-- UI в браузере: `GET /`
-- Healthcheck: `GET /healthz`
-- Deals IDs endpoint: `GET /api/deals/ids`
-- Deal fields endpoint: `GET /api/deals/fields`
-- Export endpoint: `POST /api/export`
-- Источник сделок:
-  - прямой импорт из Bitrix24 API (по webhook, без пользовательского файла)
-  - совместимый fallback: загрузка файла `.xlsx` или html-xls
-- Для каждой сделки:
-  - поиск проекта по `UF_CRM_PROJECT_GROUP_ID` (fallback по названию)
-  - выгрузка задач проекта (`tasks.task.list`) с пагинацией
-  - привязка задач к нужной сделке/проекту
-- Выход: один XLSX с листами:
-  - `Паспорт проекта`
-  - `Задачи проекта`
+## Локальный запуск
 
-## Конфигурация
-Через переменные окружения:
-- `ADDR` — адрес сервера (по умолчанию `:25504`)
-- `BITRIX_WEBHOOK_URL` — webhook Bitrix24 (обязательный)
-- `TASK_WORKERS` — количество параллельных воркеров для выгрузки задач (по умолчанию `10`)
-- `TASK_STRATEGY` — стратегия сбора задач: `per_deal` или `bulk` (по умолчанию `per_deal`)
-
-Пример:
+### 1) Backend
 ```bash
-export ADDR=:25504
-export BITRIX_WEBHOOK_URL='https://<portal>.bitrix24.ru/rest/<user_id>/<webhook_key>/'
-export TASK_WORKERS=10
-export TASK_STRATEGY=bulk
-```
-
-## Запуск
-```bash
-cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter
+cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter/backend
 go run ./cmd/server
 ```
 
+### 2) Frontend (dev)
+```bash
+cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter/frontend
+npm install
+npm run dev
+```
+
+По умолчанию dev frontend проксирует `/api` на `http://localhost:25504`.
+
+## Production-подход
+1. Собрать фронт:
+```bash
+cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter/frontend
+npm run build
+```
+2. Запустить backend:
+```bash
+cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter/backend
+go run ./cmd/server
+```
+Backend отдает `../frontend/dist` как UI.
+
 ## Docker
-Подготовка:
 ```bash
 cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter
 cp .env.example .env
-```
-
-Заполнить в `.env`:
-- `BITRIX_WEBHOOK_URL` (обязательно)
-- при необходимости `TASK_WORKERS`, `TASK_STRATEGY`, `ADDR`
-
-Запуск:
-```bash
 docker compose up -d --build
 ```
 
-Проверка:
-```bash
-curl http://localhost:25504/healthz
-```
-
-Остановка:
-```bash
-docker compose down
-```
-
-## Деплой На VDS
-1. Скопировать проект на сервер.
-2. Установить Docker + Docker Compose plugin.
-3. В корне проекта создать `.env`:
-```bash
-cp .env.example .env
-```
-4. Прописать `BITRIX_WEBHOOK_URL`.
-5. Запустить:
-```bash
-docker compose up -d --build
-```
-6. Открыть порт `25504/tcp` в firewall/security group.
-7. Проверить:
-- UI: `http://<VDS_IP>:25504/`
-- healthcheck: `http://<VDS_IP>:25504/healthz`
+## Переменные окружения
+- `ADDR` (default `:25504`)
+- `BITRIX_WEBHOOK_URL` (обязателен)
+- `TASK_WORKERS` (default `10`)
+- `TASK_STRATEGY` (`per_deal` или `bulk`)
 
 ## API
-`GET /api/deals/ids`:
-- возвращает список всех CRM сделок с полями `id` и `title`
-- удобно, чтобы взять правильный `deal_id` для точечной выгрузки
-
-Пример:
-```bash
-curl 'http://localhost:8080/api/deals/ids'
-```
-
-`GET /api/deals/fields`:
-- возвращает поля сделки (`code`, `title`, `type`)
-- нужно для сверки, какие `UF_CRM_*` маппить в паспорт
-
-Пример:
-```bash
-curl 'http://localhost:8080/api/deals/fields'
-```
-
-`POST /api/export` (`multipart/form-data`):
-- `deal_ids` (опционально) — один ID или несколько CRM ID через запятую
-- `deal_id` (опционально, legacy) — один CRM ID
-- `file` (опционально) — файл выгрузки сделок (`.xlsx` или html-xls)
-- если `file` не передан, сделки будут загружены напрямую из Bitrix24 API
-- код поля связи сделка → проект фиксирован в backend: `UF_CRM_PROJECT_GROUP_ID`
-
-Пример:
-```bash
-curl -X POST 'http://localhost:8080/api/export' \
-  -F 'file=@/absolute/path/deals.xls' \
-  --output passport_tasks.xlsx
-```
-
-Пример без файла (все сделки из Bitrix):
-```bash
-curl -X POST 'http://localhost:8080/api/export' \
-  --output passport_tasks.xlsx
-```
-
-Пример без файла (одна сделка):
-```bash
-curl -X POST 'http://localhost:8080/api/export' \
-  -F 'deal_id=12345' \
-  --output passport_tasks.xlsx
-```
-
-Пример без файла (несколько сделок):
-```bash
-curl -X POST 'http://localhost:8080/api/export' \
-  -F 'deal_ids=12345,12346,12347' \
-  --output passport_tasks.xlsx
-```
+- `GET /healthz`
+- `GET /api/deals/ids`
+- `GET /api/deals/fields`
+- `POST /api/export`

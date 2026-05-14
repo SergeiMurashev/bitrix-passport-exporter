@@ -892,14 +892,7 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 }
 
 func (c *Client) loadEnumLabels(ctx context.Context) (map[string]map[string]string, error) {
-	fields, err := c.ListDealFields(ctx)
-	if err != nil {
-		return nil, err
-	}
 	out := make(map[string]map[string]string)
-	for _, f := range fields {
-		_ = f
-	}
 	resp, err := c.callWithRetry(ctx, "crm.deal.fields", nil)
 	if err != nil {
 		return nil, err
@@ -947,6 +940,13 @@ func enumValue(enumLabels map[string]map[string]string, fieldCode, raw string) s
 	if byField, ok := enumLabels[fieldCode]; ok {
 		if label, ok := byField[v]; ok {
 			return label
+		}
+		// Some Bitrix enum fields can return numeric IDs with insignificant formatting differences.
+		// Try normalized integer key as a safe fallback.
+		if iv := toInt(v); iv > 0 {
+			if label, ok := byField[strconv.Itoa(iv)]; ok {
+				return label
+			}
 		}
 	}
 	return v

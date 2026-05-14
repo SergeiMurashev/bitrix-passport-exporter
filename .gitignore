@@ -3,3 +3,5 @@
 *.out
 docapp-go
 .env
+frontend/node_modules/
+frontend/dist/
