@@ -113,12 +113,18 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isFullExport := len(dealIDs) == 0
+	fullExportLocked := false
 	if isFullExport {
 		if !h.tryStartFullExport() {
 			http.Error(w, "full export is already running; please wait and retry", http.StatusTooManyRequests)
 			return
 		}
-		defer h.finishFullExport()
+		fullExportLocked = true
+		defer func() {
+			if fullExportLocked {
+				h.finishFullExport()
+			}
+		}()
 	}
 
 	projects, sourceLabel, err := h.loadProjects(r, bClient, dealIDs)
@@ -275,6 +281,12 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Unlock full export before sending the file over HTTP.
+	// File transfer can be long and must not block the next export run.
+	if fullExportLocked {
+		h.finishFullExport()
+		fullExportLocked = false
 	}
 	filename := buildDownloadFilename(sourceLabel, dealIDs)
 	w.Header().Set("X-Export-Success", "true")
