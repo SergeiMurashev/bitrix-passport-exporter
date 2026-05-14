@@ -27,11 +27,30 @@ type Handler struct {
 	cfg            config.Config
 	mu             sync.Mutex
 	fullExportBusy bool
+	status         exportStatus
 }
 
 const projectFieldCode = "UF_CRM_PROJECT_GROUP_ID"
 
-func New(cfg config.Config) *Handler { return &Handler{cfg: cfg} }
+type exportStatus struct {
+	Running        bool      `json:"running"`
+	Phase          string    `json:"phase"`
+	DealsProcessed int       `json:"deals_processed"`
+	DealsTotal     int       `json:"deals_total"`
+	TasksTotal     int       `json:"tasks_total"`
+	StartedAt      time.Time `json:"started_at,omitempty"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
+	LastError      string    `json:"last_error,omitempty"`
+}
+
+func New(cfg config.Config) *Handler {
+	return &Handler{
+		cfg: cfg,
+		status: exportStatus{
+			Phase: "idle",
+		},
+	}
+}
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
@@ -47,6 +66,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	logRoute("GET", "/api/deals/ids", "Handler.dealIDs", 0)
 	mux.HandleFunc("/api/deals/fields", h.dealFields)
 	logRoute("GET", "/api/deals/fields", "Handler.dealFields", 0)
+	mux.HandleFunc("/api/export/status", h.exportStatus)
+	logRoute("GET", "/api/export/status", "Handler.exportStatus", 0)
 	// Основной вызов
 	mux.HandleFunc("/api/export", h.export)
 	logRoute("POST", "/api/export", "Handler.export", 0)
@@ -125,10 +146,23 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				h.finishFullExport()
 			}
 		}()
+		h.setStatus(func(s *exportStatus) {
+			s.Running = true
+			s.Phase = "passport"
+			s.DealsProcessed = 0
+			s.DealsTotal = 0
+			s.TasksTotal = 0
+			s.StartedAt = time.Now().UTC()
+			s.FinishedAt = time.Time{}
+			s.LastError = ""
+		})
 	}
 
 	projects, sourceLabel, err := h.loadProjects(r, bClient, dealIDs)
 	if err != nil {
+		if isFullExport {
+			h.markStatusError(err.Error())
+		}
 		log.WithError(err).WithField("deal_ids", dealIDs).Error("export load projects failed")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -171,6 +205,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
+				h.markStatusError("failed to load deals page: " + pageErr.Error())
 				http.Error(w, "failed to load deals page: "+pageErr.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -184,6 +219,10 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				"deals_processed": processed,
 				"next":            page.Next,
 			}).Info("export progress")
+			h.setStatus(func(s *exportStatus) {
+				s.Phase = "passport"
+				s.DealsProcessed = processed
+			})
 			if page.Next == 0 || page.Next <= start {
 				break
 			}
@@ -193,6 +232,10 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			"phase":       "passport",
 			"deals_total": len(allProjects),
 		}).Info("export phase finished")
+		h.setStatus(func(s *exportStatus) {
+			s.Phase = "tasks"
+			s.DealsTotal = len(allProjects)
+		})
 
 		log.WithFields(log.Fields{
 			"phase":       "tasks",
@@ -201,6 +244,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
 			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, projectField, allowTitleFallback)
 			if allErr != nil {
+				h.markStatusError("failed to collect tasks: " + allErr.Error())
 				if strings.Contains(allErr.Error(), "webhook auth failed") {
 					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
 					return
@@ -216,6 +260,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				"deals_processed": len(allProjects),
 				"tasks_total":     len(tasks),
 			}).Info("export progress")
+			h.setStatus(func(s *exportStatus) {
+				s.Phase = "tasks"
+				s.DealsProcessed = len(allProjects)
+				s.TasksTotal = len(tasks)
+			})
 		} else {
 			for i := 0; i < len(allProjects); i += pageSize {
 				end := i + pageSize
@@ -225,6 +274,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				chunk := allProjects[i:end]
 				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, projectField, allowTitleFallback)
 				if chunkErr != nil {
+					h.markStatusError("failed to collect tasks: " + chunkErr.Error())
 					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
 						http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
 						return
@@ -240,6 +290,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 					"deals_processed": end,
 					"tasks_total":     len(tasks),
 				}).Info("export progress")
+				h.setStatus(func(s *exportStatus) {
+					s.Phase = "tasks"
+					s.DealsProcessed = end
+					s.TasksTotal = len(tasks)
+				})
 			}
 		}
 		log.WithFields(log.Fields{
@@ -279,6 +334,9 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	result, err := export.BuildResultXLSX(projects, tasks)
 	if err != nil {
+		if isFullExport {
+			h.markStatusError("failed to build xlsx: " + err.Error())
+		}
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -299,6 +357,14 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result)
+	if isFullExport {
+		h.setStatus(func(s *exportStatus) {
+			s.Running = false
+			s.Phase = "idle"
+			s.FinishedAt = time.Now().UTC()
+			s.LastError = ""
+		})
+	}
 }
 
 func (h *Handler) tryStartFullExport() bool {
@@ -315,6 +381,33 @@ func (h *Handler) finishFullExport() {
 	h.mu.Lock()
 	h.fullExportBusy = false
 	h.mu.Unlock()
+}
+
+func (h *Handler) setStatus(update func(*exportStatus)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	update(&h.status)
+}
+
+func (h *Handler) markStatusError(message string) {
+	h.setStatus(func(s *exportStatus) {
+		s.Running = false
+		s.Phase = "error"
+		s.LastError = message
+		s.FinishedAt = time.Now().UTC()
+	})
+}
+
+func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.mu.Lock()
+	status := h.status
+	h.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 func mergeExportStats(a, b service.ExportStats) service.ExportStats {

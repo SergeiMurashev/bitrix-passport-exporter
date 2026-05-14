@@ -1,6 +1,14 @@
 import './styles.css'
 
 type Mode = 'all' | 'ids' | 'file'
+type ExportStatus = {
+  running: boolean
+  phase: string
+  deals_processed: number
+  deals_total: number
+  tasks_total: number
+  last_error?: string
+}
 
 const root = document.getElementById('root') as HTMLDivElement
 root.innerHTML = `
@@ -41,6 +49,7 @@ const fileEl = document.getElementById('file') as HTMLInputElement
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
 
 let mode: Mode = 'all'
+let lastRunning = false
 
 function setMode(next: Mode) {
   mode = next
@@ -91,3 +100,35 @@ form.addEventListener('submit', async (e) => {
     submitBtn.textContent = 'Сформировать XLSX'
   }
 })
+
+async function refreshExportStatus() {
+  try {
+    const res = await fetch('/api/export/status')
+    if (!res.ok) return
+    const data = await res.json() as ExportStatus
+
+    if (data.running) {
+      submitBtn.disabled = true
+      submitBtn.textContent = 'Формируем...'
+      const total = data.deals_total > 0 ? data.deals_total : '?'
+      setStatus(`Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}.`, 'muted')
+    } else {
+      if (lastRunning) {
+        if (data.last_error) {
+          setStatus(`Выгрузка завершилась с ошибкой: ${data.last_error}`, 'err')
+        } else {
+          setStatus('Выгрузка завершена. Если файл не скачался автоматически, запустите выгрузку ещё раз.', 'ok')
+          alert('Выгрузка завершена. Проверьте загрузки браузера.')
+        }
+      }
+      submitBtn.disabled = false
+      submitBtn.textContent = 'Сформировать XLSX'
+    }
+    lastRunning = data.running
+  } catch (_err) {
+    // no-op
+  }
+}
+
+setInterval(refreshExportStatus, 3000)
+void refreshExportStatus()
