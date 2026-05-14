@@ -122,13 +122,16 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}).Info("export request")
 
 	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
-	isFullBitrixExport := sourceLabel == "bitrix_all_deal"
+	isFullBitrixExport := sourceLabel == "bitrix_api"
 	exportTimeout := 12 * time.Minute
 	allowTitleFallback := true
 	if isFullBitrixExport {
+		// Полный экспорт по тысячам сделок: даем больше времени и отключаем дорогой fallback поиска проекта по названию.
 		exportTimeout = 35 * time.Minute
 		allowTitleFallback = false
 	}
+	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
+	// В противном случае прерывания загрузки/выгрузки отменяют вызовы Битрикса в процессе выполнения.
 	ctx, cancel := context.WithTimeout(context.Background(), exportTimeout)
 	defer cancel()
 	var (
@@ -141,7 +144,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		start := 0
 		processed := 0
 		var allProjects []model.ProjectRow
-		log.WithField("source", "bitrix_all_deal").Info("export phase=passport started")
+		log.WithField("source", "bitrix_api").Info("export phase=passport started")
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
@@ -377,7 +380,8 @@ func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealIDs 
 		return nil, "", fmt.Errorf("invalid file field: %w", err)
 	}
 	if len(dealIDs) == 0 {
-		return nil, "bitrix_all_deal", nil
+		// Для полного экспорта сделки будут загружены чанками в основном обработчике.
+		return nil, "bitrix_api", nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -389,7 +393,7 @@ func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealIDs 
 		}
 		return nil, "", fmt.Errorf("failed to load deals from bitrix: %w", err)
 	}
-	label := "bitrix_all_deal"
+	label := "bitrix_api"
 	if len(dealIDs) == 1 {
 		label = fmt.Sprintf("bitrix_deal_%d", dealIDs[0])
 	}
@@ -438,14 +442,11 @@ func buildDownloadFilename(src string, dealIDs []int) string {
 	if base == "" {
 		base = "bitrix_export"
 	}
-	if len(dealIDs) == 0 && strings.EqualFold(src, "bitrix_api") {
-		base = "bitrix_all_deals"
-	}
 	if len(dealIDs) == 1 {
-		base = fmt.Sprintf("bitrix_deal_%d", dealIDs[0])
+		base = fmt.Sprintf("deal_%d", dealIDs[0])
 	}
 	if len(dealIDs) > 1 {
-		base = fmt.Sprintf("bitrix_deals_%d", len(dealIDs))
+		base = fmt.Sprintf("deals_%d", len(dealIDs))
 	}
 	return base + "_passport_and_tasks.xlsx"
 }
@@ -499,7 +500,6 @@ const indexHTML = `<!doctype html>
       <div class="hint">Webhook берется из конфигурации сервера (BITRIX_WEBHOOK_URL).</div>
 
       <button id="submitBtn" type="submit">Сформировать XLSX</button>
-      <button id="downloadLastBtn" type="button" style="display:none;margin-left:8px;background:#16a34a;">Скачать последний файл</button>
       <div id="progressStatus" class="status muted"></div>
     </form>
   </div>
@@ -510,9 +510,6 @@ const indexHTML = `<!doctype html>
       const fileStatus = document.getElementById('fileStatus');
       const progressStatus = document.getElementById('progressStatus');
       const submitBtn = document.getElementById('submitBtn');
-      const downloadLastBtn = document.getElementById('downloadLastBtn');
-      let lastBlobUrl = '';
-      let lastFileName = '';
 
       fileInput.addEventListener('change', function () {
         if (fileInput.files && fileInput.files.length > 0) {
@@ -538,20 +535,6 @@ const indexHTML = `<!doctype html>
         progressStatus.textContent = doneText || '';
         progressStatus.className = doneText ? 'status' : 'status muted';
       }
-
-      function triggerDownload(url, filename) {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename || 'passport_tasks.xlsx';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
-
-      downloadLastBtn.addEventListener('click', function () {
-        if (!lastBlobUrl) return;
-        triggerDownload(lastBlobUrl, lastFileName);
-      });
 
       function parseFileName(contentDisposition) {
         if (!contentDisposition) return 'passport_tasks.xlsx';
@@ -620,13 +603,14 @@ const indexHTML = `<!doctype html>
               meta: exportMeta
             }
           });
-          if (lastBlobUrl) {
-            URL.revokeObjectURL(lastBlobUrl);
-          }
-          lastBlobUrl = URL.createObjectURL(blob);
-          lastFileName = filename;
-          downloadLastBtn.style.display = 'inline-block';
-          triggerDownload(lastBlobUrl, lastFileName);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
 
           resetState(
             'Готово. Файл сформирован и скачан. ' +
