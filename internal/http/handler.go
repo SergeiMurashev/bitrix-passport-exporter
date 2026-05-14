@@ -442,6 +442,9 @@ func buildDownloadFilename(src string, dealIDs []int) string {
 	if base == "" {
 		base = "bitrix_export"
 	}
+	if len(dealIDs) == 0 && strings.EqualFold(src, "bitrix_api") {
+		base = "bitrix_all_deals"
+	}
 	if len(dealIDs) == 1 {
 		base = fmt.Sprintf("deal_%d", dealIDs[0])
 	}
