@@ -340,11 +340,18 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Unlock full export before sending the file over HTTP.
-	// File transfer can be long and must not block the next export run.
+	// Unlock before writing response, so long file transfer does not block next run.
 	if fullExportLocked {
 		h.finishFullExport()
 		fullExportLocked = false
+	}
+	if isFullExport {
+		h.setStatus(func(s *exportStatus) {
+			s.Running = false
+			s.Phase = "idle"
+			s.FinishedAt = time.Now().UTC()
+			s.LastError = ""
+		})
 	}
 	filename := buildDownloadFilename(sourceLabel, dealIDs)
 	w.Header().Set("X-Export-Success", "true")
@@ -356,14 +363,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(result)
-	if isFullExport {
-		h.setStatus(func(s *exportStatus) {
-			s.Running = false
-			s.Phase = "idle"
-			s.FinishedAt = time.Now().UTC()
-			s.LastError = ""
-		})
+	if _, writeErr := w.Write(result); writeErr != nil {
+		log.WithError(writeErr).Warn("export response write failed")
 	}
 }
 
