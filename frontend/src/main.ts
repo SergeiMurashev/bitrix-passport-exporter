@@ -7,6 +7,8 @@ type ExportStatus = {
   deals_processed: number
   deals_total: number
   tasks_total: number
+  has_last_result: boolean
+  last_file_name?: string
   last_error?: string
 }
 
@@ -33,6 +35,7 @@ root.innerHTML = `
         </div>
 
         <button id="submit" type="submit">Сформировать XLSX</button>
+        <button id="download-last" class="hidden" type="button">Скачать готовый файл</button>
       </form>
 
       <p id="status" class="status"></p>
@@ -47,6 +50,7 @@ const statusEl = document.getElementById('status') as HTMLParagraphElement
 const dealIdsEl = document.getElementById('deal-ids') as HTMLInputElement
 const fileEl = document.getElementById('file') as HTMLInputElement
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
+const downloadLastBtn = document.getElementById('download-last') as HTMLButtonElement
 
 let mode: Mode = 'all'
 let lastRunning = false
@@ -101,6 +105,14 @@ form.addEventListener('submit', async (e) => {
   }
 })
 
+downloadLastBtn.addEventListener('click', () => {
+  const a = document.createElement('a')
+  a.href = '/api/export/download-last'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+})
+
 async function refreshExportStatus() {
   try {
     const res = await fetch('/api/export/status')
@@ -110,6 +122,7 @@ async function refreshExportStatus() {
     if (data.running) {
       submitBtn.disabled = true
       submitBtn.textContent = 'Формируем...'
+      downloadLastBtn.classList.add('hidden')
       const total = data.deals_total > 0 ? data.deals_total : '?'
       setStatus(`Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}.`, 'muted')
     } else {
@@ -117,12 +130,20 @@ async function refreshExportStatus() {
         if (data.last_error) {
           setStatus(`Выгрузка завершилась с ошибкой: ${data.last_error}`, 'err')
         } else {
-          setStatus('Выгрузка завершена. Если файл не скачался автоматически, запустите выгрузку ещё раз.', 'ok')
-          alert('Выгрузка завершена. Проверьте загрузки браузера.')
+          setStatus('Выгрузка завершена. Нажмите кнопку ниже, чтобы скачать готовый файл.', 'ok')
         }
       }
       submitBtn.disabled = false
       submitBtn.textContent = 'Сформировать XLSX'
+      if (data.has_last_result) {
+        downloadLastBtn.classList.remove('hidden')
+        downloadLastBtn.textContent = data.last_file_name
+          ? `Скачать готовый файл (${data.last_file_name})`
+          : 'Скачать готовый файл'
+      } else {
+        downloadLastBtn.classList.add('hidden')
+        downloadLastBtn.textContent = 'Скачать готовый файл'
+      }
     }
     lastRunning = data.running
   } catch (_err) {

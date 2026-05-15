@@ -28,6 +28,9 @@ type Handler struct {
 	mu             sync.Mutex
 	fullExportBusy bool
 	status         exportStatus
+	lastResult     []byte
+	lastFilename   string
+	lastUpdatedAt  time.Time
 }
 
 const projectFieldCode = "UF_CRM_PROJECT_GROUP_ID"
@@ -38,6 +41,8 @@ type exportStatus struct {
 	DealsProcessed int       `json:"deals_processed"`
 	DealsTotal     int       `json:"deals_total"`
 	TasksTotal     int       `json:"tasks_total"`
+	HasLastResult  bool      `json:"has_last_result"`
+	LastFileName   string    `json:"last_file_name,omitempty"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
 	FinishedAt     time.Time `json:"finished_at,omitempty"`
 	LastError      string    `json:"last_error,omitempty"`
@@ -68,6 +73,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	logRoute("GET", "/api/deals/fields", "Handler.dealFields", 0)
 	mux.HandleFunc("/api/export/status", h.exportStatus)
 	logRoute("GET", "/api/export/status", "Handler.exportStatus", 0)
+	mux.HandleFunc("/api/export/download-last", h.downloadLastExport)
+	logRoute("GET", "/api/export/download-last", "Handler.downloadLastExport", 0)
 	// Основной вызов
 	mux.HandleFunc("/api/export", h.export)
 	logRoute("POST", "/api/export", "Handler.export", 0)
@@ -345,6 +352,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		h.finishFullExport()
 		fullExportLocked = false
 	}
+	filename := buildDownloadFilename(sourceLabel, dealIDs)
+	h.storeLastResult(result, filename)
 	if isFullExport {
 		h.setStatus(func(s *exportStatus) {
 			s.Running = false
@@ -353,7 +362,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			s.LastError = ""
 		})
 	}
-	filename := buildDownloadFilename(sourceLabel, dealIDs)
 	w.Header().Set("X-Export-Success", "true")
 	w.Header().Set("X-Export-Source", sourceLabel)
 	w.Header().Set("X-Export-Deals-Total", strconv.Itoa(stats.DealsTotal))
@@ -390,6 +398,16 @@ func (h *Handler) setStatus(update func(*exportStatus)) {
 	update(&h.status)
 }
 
+func (h *Handler) storeLastResult(data []byte, filename string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lastResult = append([]byte(nil), data...)
+	h.lastFilename = filename
+	h.lastUpdatedAt = time.Now().UTC()
+	h.status.HasLastResult = true
+	h.status.LastFileName = filename
+}
+
 func (h *Handler) markStatusError(message string) {
 	h.setStatus(func(s *exportStatus) {
 		s.Running = false
@@ -409,6 +427,30 @@ func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(status)
+}
+
+func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.mu.Lock()
+	data := append([]byte(nil), h.lastResult...)
+	filename := h.lastFilename
+	h.mu.Unlock()
+	if len(data) == 0 {
+		http.Error(w, "no ready export file", http.StatusNotFound)
+		return
+	}
+	if strings.TrimSpace(filename) == "" {
+		filename = "bitrix_last_export_passport_and_tasks.xlsx"
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(data); err != nil {
+		log.WithError(err).Warn("download last export write failed")
+	}
 }
 
 func mergeExportStats(a, b service.ExportStats) service.ExportStats {
