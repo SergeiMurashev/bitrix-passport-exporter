@@ -37,6 +37,14 @@ root.innerHTML = `
         <button id="submit" type="submit">Сформировать XLSX</button>
         <button id="download-last" class="hidden" type="button">Скачать готовый файл</button>
       </form>
+      <div id="progress-wrap" class="progress-wrap hidden" aria-live="polite">
+        <div class="progress-head">
+          <span id="progress-phase">Подготовка…</span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+      </div>
 
       <p id="status" class="status"></p>
     </main>
@@ -51,6 +59,9 @@ const dealIdsEl = document.getElementById('deal-ids') as HTMLInputElement
 const fileEl = document.getElementById('file') as HTMLInputElement
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
 const downloadLastBtn = document.getElementById('download-last') as HTMLButtonElement
+const progressWrap = document.getElementById('progress-wrap') as HTMLDivElement
+const progressBar = document.getElementById('progress-bar') as HTMLDivElement
+const progressPhase = document.getElementById('progress-phase') as HTMLSpanElement
 
 let mode: Mode = 'all'
 let lastRunning = false
@@ -66,6 +77,89 @@ function setStatus(text: string, kind: 'ok' | 'err' | 'muted' = 'muted') {
   statusEl.className = `status ${kind}`
 }
 
+function setProgress(visible: boolean, phaseText = 'Подготовка…') {
+  progressWrap.classList.toggle('hidden', !visible)
+  progressBar.classList.toggle('running', visible)
+  progressPhase.textContent = phaseText
+}
+
+function detectPhase(data: ExportStatus): string {
+  if (!data.running) return 'Готово'
+  const phase = (data.phase || '').toLowerCase()
+  if (phase === 'passport') {
+    return 'Сбор данных сделок'
+  }
+  if (phase === 'tasks') {
+    return 'Сбор задач и сборка файла'
+  }
+  return 'Подготовка экспорта'
+}
+// Словарь уведомлений
+function humanizeError(message: string): string {
+  const text = (message || '').toLowerCase().trim()
+  if (!text) return 'Не удалось сформировать файл. Повторите попытку.'
+
+  const rules: Array<{ test: (t: string) => boolean; userText: string }> = [
+    {
+      test: (t) => t.includes('deal_ids not found') || t.includes('not found in crm.deal.list'),
+      userText: 'Сделка не найдена в Bitrix24. Проверьте ID сделки и попробуйте снова.',
+    },
+    {
+      test: (t) => t.includes('deal_ids must contain positive integers'),
+      userText: 'Некорректный формат ID сделки. Укажите одно или несколько положительных чисел через запятую.',
+    },
+    {
+      test: (t) => t.includes('invalid webhook') || t.includes('webhook is invalid or expired'),
+      userText: 'Ошибка доступа к Bitrix24: webhook недействителен или истек.',
+    },
+    {
+      test: (t) => t.includes('server is not configured: bitrix_webhook_url is empty'),
+      userText: 'Сервер не настроен: не указан webhook Bitrix24.',
+    },
+    {
+      test: (t) => t.includes('full export is already running'),
+      userText: 'Уже выполняется полная выгрузка. Дождитесь завершения и повторите.',
+    },
+    {
+      test: (t) => t.includes('context deadline exceeded') || t.includes('timeout'),
+      userText: 'Bitrix24 слишком долго отвечает. Повторите попытку чуть позже.',
+    },
+    {
+      test: (t) => t.includes('failed to load deals') || t.includes('failed to load deals page'),
+      userText: 'Не удалось загрузить сделки из Bitrix24. Повторите попытку.',
+    },
+    {
+      test: (t) => t.includes('failed to collect tasks') || t.includes('task'),
+      userText: 'Не удалось загрузить задачи по сделкам. Повторите попытку.',
+    },
+    {
+      test: (t) => t.includes('failed to parse input') || t.includes('invalid file field') || t.includes('invalid multipart form') || t.includes('invalid form'),
+      userText: 'Не удалось прочитать файл. Проверьте формат (xls/xlsx/html) и попробуйте снова.',
+    },
+    {
+      test: (t) => t.includes('failed to build xlsx'),
+      userText: 'Не удалось сформировать итоговый Excel-файл. Повторите попытку.',
+    },
+    {
+      test: (t) => t.includes('method not allowed'),
+      userText: 'Некорректный тип запроса. Обновите страницу и повторите.',
+    },
+    {
+      test: (t) => t.includes('http 429'),
+      userText: 'Слишком много запросов. Подождите немного и повторите.',
+    },
+    {
+      test: (t) => t.includes('http 500') || t.includes('http 502') || t.includes('http 503') || t.includes('http 504'),
+      userText: 'Временная ошибка сервера. Повторите попытку чуть позже.',
+    },
+  ]
+
+  for (const rule of rules) {
+    if (rule.test(text)) return rule.userText
+  }
+  return 'Не удалось выполнить выгрузку. Повторите попытку.'
+}
+
 form.addEventListener('change', (e) => {
   const target = e.target as HTMLInputElement
   if (target.name === 'mode') setMode(target.value as Mode)
@@ -75,6 +169,7 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault()
   submitBtn.disabled = true
   submitBtn.textContent = 'Формируем...'
+  setProgress(true, 'Подготовка экспорта')
   setStatus('Формируем файл. Для полной выгрузки потребуется некоторое время.', 'muted')
 
   try {
@@ -97,8 +192,10 @@ form.addEventListener('submit', async (e) => {
     URL.revokeObjectURL(url)
 
     setStatus(`Готово. Сделок: ${res.headers.get('x-export-deals-total') || '-'}, задач: ${res.headers.get('x-export-tasks-total') || '-'}.`, 'ok')
+    setProgress(false)
   } catch (error) {
-    setStatus((error as Error).message || 'Ошибка экспорта', 'err')
+    setStatus(humanizeError((error as Error).message || ''), 'err')
+    setProgress(false)
   } finally {
     submitBtn.disabled = false
     submitBtn.textContent = 'Сформировать XLSX'
@@ -123,12 +220,14 @@ async function refreshExportStatus() {
       submitBtn.disabled = true
       submitBtn.textContent = 'Формируем...'
       downloadLastBtn.classList.add('hidden')
+      setProgress(true, detectPhase(data))
       const total = data.deals_total > 0 ? data.deals_total : '?'
       setStatus(`Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}.`, 'muted')
     } else {
+      setProgress(false)
       if (lastRunning) {
         if (data.last_error) {
-          setStatus(`Выгрузка завершилась с ошибкой: ${data.last_error}`, 'err')
+          setStatus(`Выгрузка завершилась с ошибкой: ${humanizeError(data.last_error)}`, 'err')
         } else {
           setStatus('Выгрузка завершена. Нажмите кнопку ниже, чтобы скачать готовый файл.', 'ok')
         }

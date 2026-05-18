@@ -92,3 +92,46 @@ button:disabled { opacity: .7; cursor: not-allowed; }
 .status.ok { color: #70e8a0; }
 .status.err { color: #ff8a8a; }
 .status.muted { color: #d1e3ff; }
+
+.progress-wrap {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(13, 27, 47, 0.65);
+}
+
+.progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 45%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(51, 178, 255, .15) 0%, rgba(51, 178, 255, .9) 40%, rgba(47, 111, 235, .95) 55%, rgba(51, 178, 255, .15) 100%);
+  transform: translateX(-120%);
+}
+
+.progress-bar.running {
+  animation: wave-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes wave-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(260%); }
+}
