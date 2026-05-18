@@ -42,27 +42,30 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 			continue
 		}
 
-		// Строка раздела (как в docApp) — объединение по B:D
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), sec.name)
 		_ = f.MergeCell(sheet, fmt.Sprintf("B%d", row), fmt.Sprintf("D%d", row))
 		row++
 
 		for _, p := range sec.projects {
 			f.SetCellValue(sheet, fmt.Sprintf("A%d", row), num)
-			addLabeledRichText(f, sheet, fmt.Sprintf("B%d", row), []textPart{
-				{value: strings.TrimSpace(p.DealTitle)},
+			projectParts := []textPart{
+				{value: strings.TrimSpace(p.DealTitle), bold: true},
 				{label: "Местоположение: ", value: strings.TrimSpace(p.Location)},
 				{label: "Организация-инвестор: ", value: strings.TrimSpace(p.Investor)},
 				{label: "Объём инвестиций: ", value: strings.TrimSpace(p.InvestPlan)},
 				{label: "Срок реализации: ", value: strings.TrimSpace(p.DateRange)},
 				{label: "Количество рабочих мест: ", value: strings.TrimSpace(p.Jobs)},
-			})
-			addLabeledRichText(f, sheet, fmt.Sprintf("C%d", row), []textPart{
+			}
+			stageParts := []textPart{
 				{label: "Проектом предполагается:\n", value: strings.TrimSpace(p.Description)},
 				{label: "Информация о стадии и ходе реализации:\n", value: strings.TrimSpace(p.Progress)},
 				{label: "Предоставленная мера поддержки:\n", value: strings.TrimSpace(p.Support)},
-			})
-			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), tasksByDeal[p.DealID])
+			}
+			taskText := tasksByDeal[p.DealID]
+			addLabeledRichText(f, sheet, fmt.Sprintf("B%d", row), projectParts)
+			addLabeledRichText(f, sheet, fmt.Sprintf("C%d", row), stageParts)
+			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), taskText)
+			_ = f.SetRowHeight(sheet, row, estimateRowHeight(projectParts, stageParts, taskText))
 			num++
 			row++
 		}
@@ -171,7 +174,7 @@ func buildTasksByDeal(tasks []model.TaskRow) map[int]string {
 			seen[line] = struct{}{}
 			lines = append(lines, line)
 		}
-		out[dealID] = strings.Join(lines, "\n")
+		out[dealID] = strings.Join(lines, "\n\n")
 	}
 	return out
 }
@@ -203,6 +206,7 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int) error {
 	sectionStyle, err := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true},
 		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"#F2F2F2"}, Pattern: 1},
 		Border:    []excelize.Border{{Type: "left", Color: "000000", Style: 1}, {Type: "top", Color: "000000", Style: 1}, {Type: "right", Color: "000000", Style: 1}, {Type: "bottom", Color: "000000", Style: 1}},
 	})
 	if err != nil {
@@ -222,9 +226,7 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int) error {
 			if strings.TrimSpace(bVal) != "" && strings.TrimSpace(cVal) == "" && strings.TrimSpace(dVal) == "" {
 				_ = f.SetCellStyle(sheet, fmt.Sprintf("B%d", r), fmt.Sprintf("D%d", r), sectionStyle)
 				_ = f.SetRowHeight(sheet, r, 22)
-				continue
 			}
-			_ = f.SetRowHeight(sheet, r, 112)
 		}
 	}
 	_ = f.SetPanes(sheet, &excelize.Panes{Freeze: true, Split: false, XSplit: 0, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})
@@ -232,7 +234,7 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int) error {
 }
 
 func addLabeledRichText(f *excelize.File, sheet, cell string, parts []textPart) {
-	runs := make([]excelize.RichTextRun, 0, len(parts)*2)
+	runs := make([]excelize.RichTextRun, 0, len(parts)*3)
 	for i, p := range parts {
 		if strings.TrimSpace(p.label) != "" {
 			runs = append(runs, excelize.RichTextRun{
@@ -240,12 +242,10 @@ func addLabeledRichText(f *excelize.File, sheet, cell string, parts []textPart) 
 				Font: &excelize.Font{Bold: true, Family: "Arial", Size: 11},
 			})
 		}
-		if strings.TrimSpace(p.value) != "" {
-			runs = append(runs, excelize.RichTextRun{
-				Text: p.value,
-				Font: &excelize.Font{Family: "Arial", Size: 11},
-			})
-		}
+		runs = append(runs, excelize.RichTextRun{
+			Text: strings.TrimSpace(p.value),
+			Font: &excelize.Font{Bold: p.bold, Family: "Arial", Size: 11},
+		})
 		if i < len(parts)-1 {
 			runs = append(runs, excelize.RichTextRun{
 				Text: "\n",
@@ -261,4 +261,59 @@ func addLabeledRichText(f *excelize.File, sheet, cell string, parts []textPart) 
 type textPart struct {
 	label string
 	value string
+	bold  bool
+}
+
+// Функция по оценки высоты строк
+func estimateRowHeight(projectParts, stageParts []textPart, taskText string) float64 {
+	// Приблизительно округляю строки по ширине столбца, чтобы пользователям не приходилось растягивать их вручную.
+	lines := wrappedTextLines(partsToPlainText(projectParts), 52)
+	if v := wrappedTextLines(partsToPlainText(stageParts), 52); v > lines {
+		lines = v
+	}
+	if v := wrappedTextLines(taskText, 52); v > lines {
+		lines = v
+	}
+	if lines < 3 {
+		lines = 3
+	}
+	if lines > 80 {
+		lines = 80
+	}
+	return float64(lines)*13 + 8
+}
+
+func partsToPlainText(parts []textPart) string {
+	lines := make([]string, 0, len(parts))
+	for _, p := range parts {
+		lines = append(lines, strings.TrimSpace(p.label)+strings.TrimSpace(p.value))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func wrappedTextLines(s string, charsPerLine int) int {
+	if strings.TrimSpace(s) == "" {
+		return 0
+	}
+	if charsPerLine <= 0 {
+		charsPerLine = 52
+	}
+	total := 0
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			total++
+			continue
+		}
+		runes := []rune(line)
+		segments := (len(runes) + charsPerLine - 1) / charsPerLine
+		if segments < 1 {
+			segments = 1
+		}
+		total += segments
+	}
+	if total < 1 {
+		return 1
+	}
+	return total
 }
