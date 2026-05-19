@@ -17,8 +17,10 @@ import (
 )
 
 type Client struct {
-	endpoint string
-	http     *http.Client
+	endpoint                 string
+	http                     *http.Client
+	supportLinkDealField     string
+	supportMeasureValueField string
 }
 
 type DealShort struct {
@@ -80,7 +82,58 @@ func NewFromWebhook(webhook string) (*Client, error) {
 		http: &http.Client{
 			Timeout: 90 * time.Second,
 		},
+		supportMeasureValueField: dealFieldSupportMeasure,
 	}, nil
+}
+
+func (c *Client) ConfigureSupportMapping(linkDealField, measureValueField string) {
+	c.supportLinkDealField = strings.TrimSpace(linkDealField)
+	if strings.TrimSpace(measureValueField) != "" {
+		c.supportMeasureValueField = strings.TrimSpace(measureValueField)
+	}
+}
+
+func (c *Client) dealSelectFields(extra ...string) []string {
+	fields := []string{
+		"ID",
+		"TITLE",
+		"STAGE_ID",
+		"COMMENTS",
+		"UF_CRM_PROJECT_GROUP_ID",
+		"UF_CRM_1739951854",
+		dealFieldIndustryRange,
+		dealFieldIndustry,
+		dealFieldSupportMeasure,
+		dealFieldMunicipality,
+		dealFieldInvestor,
+		dealFieldDescription,
+		dealFieldJobsPlan,
+		dealFieldAddress,
+		dealFieldIdentifier,
+		dealFieldInvestTotalPlan,
+		dealFieldOwnPlan,
+		dealFieldLoanPlan,
+		"BEGINDATE",
+		"CLOSEDATE",
+	}
+	if v := strings.TrimSpace(c.supportLinkDealField); v != "" {
+		fields = append(fields, v)
+	}
+	fields = append(fields, extra...)
+	uniq := make(map[string]struct{}, len(fields))
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		key := strings.TrimSpace(f)
+		if key == "" {
+			continue
+		}
+		if _, ok := uniq[key]; ok {
+			continue
+		}
+		uniq[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
 }
 
 func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, projectField string, allowTitleFallback bool) (int, string, error) {
@@ -134,30 +187,9 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 		limit = 200
 	}
 	resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-		"select": []string{
-			"ID",
-			"TITLE",
-			"STAGE_ID",
-			"COMMENTS",
-			"UF_CRM_PROJECT_GROUP_ID",
-			"UF_CRM_1739951854",
-			dealFieldIndustryRange,
-			dealFieldIndustry,
-			dealFieldSupportMeasure,
-			dealFieldMunicipality,
-			dealFieldInvestor,
-			dealFieldDescription,
-			dealFieldJobsPlan,
-			dealFieldAddress,
-			dealFieldIdentifier,
-			dealFieldInvestTotalPlan,
-			dealFieldOwnPlan,
-			dealFieldLoanPlan,
-			"BEGINDATE",
-			"CLOSEDATE",
-		},
-		"order": map[string]string{"ID": "ASC"},
-		"start": start,
+		"select": c.dealSelectFields(),
+		"order":  map[string]string{"ID": "ASC"},
+		"start":  start,
 	})
 	if err != nil {
 		return DealsPage{}, err
@@ -167,6 +199,7 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 	for _, item := range items {
 		rows = append(rows, mapDealToProjectRow(item, enumLabels, stageLabels))
 	}
+	c.applySupportFromLinkedDeals(ctx, items, rows, enumLabels)
 	next := toInt(fmt.Sprintf("%v", resp.Next))
 	total := 0
 	if m, ok := resp.Result.(map[string]any); ok {
@@ -208,41 +241,23 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 				"filter": map[string]any{
 					"ID": idValues,
 				},
-				"select": []string{
-					"ID",
-					"TITLE",
-					"STAGE_ID",
-					"COMMENTS",
-					"UF_CRM_PROJECT_GROUP_ID",
-					"UF_CRM_1739951854",
-					dealFieldIndustryRange,
-					dealFieldIndustry,
-					dealFieldSupportMeasure,
-					dealFieldMunicipality,
-					dealFieldInvestor,
-					dealFieldDescription,
-					dealFieldJobsPlan,
-					dealFieldAddress,
-					dealFieldIdentifier,
-					dealFieldInvestTotalPlan,
-					dealFieldOwnPlan,
-					dealFieldLoanPlan,
-					"BEGINDATE",
-					"CLOSEDATE",
-				},
-				"order": map[string]string{"ID": "ASC"},
+				"select": c.dealSelectFields(),
+				"order":  map[string]string{"ID": "ASC"},
 			})
 			if err != nil {
 				return nil, err
 			}
 			items := toSliceMap(resp.Result)
+			localRows := make([]model.ProjectRow, 0, len(items))
 			for _, item := range items {
 				row := mapDealToProjectRow(item, enumLabels, stageLabels)
 				if row.DealID > 0 {
 					found[row.DealID] = struct{}{}
 				}
-				out = append(out, row)
+				localRows = append(localRows, row)
 			}
+			c.applySupportFromLinkedDeals(ctx, items, localRows, enumLabels)
+			out = append(out, localRows...)
 		}
 
 		missing := make([]int, 0)
@@ -298,30 +313,9 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 			return nil, fmt.Errorf("deals pagination exceeded %d pages", maxPages)
 		}
 		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-			"select": []string{
-				"ID",
-				"TITLE",
-				"STAGE_ID",
-				"COMMENTS",
-				"UF_CRM_PROJECT_GROUP_ID",
-				"UF_CRM_1739951854", // fallback: field from XLS export often used as "Ход реализации проекта"
-				dealFieldIndustryRange,
-				dealFieldIndustry,
-				dealFieldSupportMeasure,
-				dealFieldMunicipality,
-				dealFieldInvestor,
-				dealFieldDescription,
-				dealFieldJobsPlan,
-				dealFieldAddress,
-				dealFieldIdentifier,
-				dealFieldInvestTotalPlan,
-				dealFieldOwnPlan,
-				dealFieldLoanPlan,
-				"BEGINDATE",
-				"CLOSEDATE",
-			},
-			"order": map[string]string{"ID": "ASC"},
-			"start": start,
+			"select": c.dealSelectFields(),
+			"order":  map[string]string{"ID": "ASC"},
+			"start":  start,
 		})
 		if err != nil {
 			return nil, err
@@ -331,9 +325,12 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 		if len(items) == 0 {
 			break
 		}
+		localRows := make([]model.ProjectRow, 0, len(items))
 		for _, item := range items {
-			out = append(out, mapDealToProjectRow(item, enumLabels, stageLabels))
+			localRows = append(localRows, mapDealToProjectRow(item, enumLabels, stageLabels))
 		}
+		c.applySupportFromLinkedDeals(ctx, items, localRows, enumLabels)
+		out = append(out, localRows...)
 
 		next := toInt(fmt.Sprintf("%v", resp.Next))
 		if next == 0 || next <= start {
@@ -385,30 +382,8 @@ func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []
 			"filter": map[string]any{
 				fieldCode: vals,
 			},
-			"select": []string{
-				"ID",
-				"TITLE",
-				"STAGE_ID",
-				"COMMENTS",
-				"UF_CRM_PROJECT_GROUP_ID",
-				"UF_CRM_1739951854",
-				dealFieldIndustryRange,
-				dealFieldIndustry,
-				dealFieldSupportMeasure,
-				dealFieldMunicipality,
-				dealFieldInvestor,
-				dealFieldDescription,
-				dealFieldJobsPlan,
-				dealFieldAddress,
-				dealFieldIdentifier,
-				dealFieldInvestTotalPlan,
-				dealFieldOwnPlan,
-				dealFieldLoanPlan,
-				"BEGINDATE",
-				"CLOSEDATE",
-				fieldCode,
-			},
-			"order": map[string]string{"ID": "ASC"},
+			"select": c.dealSelectFields(fieldCode),
+			"order":  map[string]string{"ID": "ASC"},
 		})
 		if callErr != nil {
 			continue
@@ -891,6 +866,133 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 	}
 }
 
+func (c *Client) applySupportFromLinkedDeals(ctx context.Context, items []map[string]any, rows []model.ProjectRow, enumLabels map[string]map[string]string) {
+	linkField := strings.TrimSpace(c.supportLinkDealField)
+	if linkField == "" || len(items) == 0 || len(rows) == 0 {
+		return
+	}
+	ids := make([]int, 0, 64)
+	perDealLinks := make(map[int][]int, len(rows))
+	for _, item := range items {
+		dealID := toInt(toString(anyMapGet(item, "ID", "id")))
+		if dealID <= 0 {
+			continue
+		}
+		linked := extractIDsFromAny(anyMapGet(item, linkField))
+		if len(linked) == 0 {
+			continue
+		}
+		perDealLinks[dealID] = linked
+		ids = append(ids, linked...)
+	}
+	ids = uniqueInts(ids)
+	if len(ids) == 0 {
+		return
+	}
+	supportByID := c.loadSupportValuesByDealIDs(ctx, ids, enumLabels)
+	if len(supportByID) == 0 {
+		return
+	}
+	for i := range rows {
+		links := perDealLinks[rows[i].DealID]
+		if len(links) == 0 {
+			continue
+		}
+		values := make([]string, 0, len(links))
+		for _, linkedID := range links {
+			if v := strings.TrimSpace(supportByID[linkedID]); v != "" {
+				values = append(values, v)
+			}
+		}
+		if len(values) > 0 {
+			rows[i].Support = strings.Join(values, "\n")
+		}
+	}
+}
+
+func (c *Client) loadSupportValuesByDealIDs(ctx context.Context, ids []int, enumLabels map[string]map[string]string) map[int]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	stageLabels, _ := c.loadDealStageMeta(ctx)
+	out := make(map[int]string, len(ids))
+	const chunkSize = 50
+	field := strings.TrimSpace(c.supportMeasureValueField)
+	if field == "" {
+		field = dealFieldSupportMeasure
+	}
+	for i := 0; i < len(ids); i += chunkSize {
+		end := i + chunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		idValues := make([]string, 0, end-i)
+		for _, id := range ids[i:end] {
+			idValues = append(idValues, strconv.Itoa(id))
+		}
+		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
+			"filter": map[string]any{"ID": idValues},
+			"select": []string{"ID", "TITLE", "STAGE_ID", field},
+		})
+		if err != nil {
+			continue
+		}
+		for _, item := range toSliceMap(resp.Result) {
+			dealID := toInt(toString(anyMapGet(item, "ID", "id")))
+			if dealID <= 0 {
+				continue
+			}
+			title := strings.TrimSpace(toString(anyMapGet(item, "TITLE", "title")))
+			stageID := strings.TrimSpace(toString(anyMapGet(item, "STAGE_ID", "stageId")))
+			stageName := stageID
+			if meta, ok := stageLabels[stageID]; ok && strings.TrimSpace(meta.Name) != "" {
+				stageName = strings.TrimSpace(meta.Name)
+			}
+			measure := strings.TrimSpace(enumValue(enumLabels, field, toString(anyMapGet(item, field))))
+			if measure == "" {
+				measure = title
+			}
+
+			parts := make([]string, 0, 4)
+			if title != "" {
+				parts = append(parts, title)
+			}
+			if measure != "" {
+				parts = append(parts, "мера: "+measure)
+			}
+			if stageName != "" {
+				parts = append(parts, "стадия: "+stageName)
+			}
+			out[dealID] = strings.Join(parts, " | ")
+		}
+	}
+	return out
+}
+
+func extractIDsFromAny(raw any) []int {
+	values := make([]string, 0, 4)
+	switch v := raw.(type) {
+	case []any:
+		for _, x := range v {
+			values = append(values, toString(x))
+		}
+	case []string:
+		values = append(values, v...)
+	default:
+		values = append(values, toString(v))
+	}
+	out := make([]int, 0, len(values))
+	for _, s := range values {
+		for _, m := range regexp.MustCompile(`\d+`).FindAllString(s, -1) {
+			id, err := strconv.Atoi(m)
+			if err == nil && id > 0 {
+				out = append(out, id)
+			}
+		}
+	}
+	return uniqueInts(out)
+}
+
 func (c *Client) loadEnumLabels(ctx context.Context) (map[string]map[string]string, error) {
 	out := make(map[string]map[string]string)
 	resp, err := c.callWithRetry(ctx, "crm.deal.fields", nil)
@@ -1066,4 +1168,20 @@ func extractBindingTokens(v any) []string {
 		re := regexp.MustCompile(`[A-Z]_\d+`)
 		return re.FindAllString(s, -1)
 	}
+}
+
+func uniqueInts(items []int) []int {
+	if len(items) == 0 {
+		return items
+	}
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(items))
+	for _, v := range items {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }

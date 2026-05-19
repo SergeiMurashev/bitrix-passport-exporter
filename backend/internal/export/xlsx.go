@@ -21,7 +21,7 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 	idx, _ := f.NewSheet(sheet)
 	f.SetActiveSheet(idx)
 
-	headers := []string{"№ п/п", "Инвестиционный проект", "Стадия", "Задача проекта"}
+	headers := []string{"№ п/п", "Инвестиционный проект", "Стадия", "Задача проекта", "Меры поддержки по проекту"}
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
@@ -30,7 +30,8 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 	_ = f.SetColWidth(sheet, "A", "A", 8)
 	_ = f.SetColWidth(sheet, "B", "B", 52)
 	_ = f.SetColWidth(sheet, "C", "C", 52)
-	_ = f.SetColWidth(sheet, "D", "D", 52)
+	_ = f.SetColWidth(sheet, "D", "D", 48)
+	_ = f.SetColWidth(sheet, "E", "E", 42)
 
 	tasksByDeal := buildTasksByDeal(tasks)
 	sections := groupBySection(projects)
@@ -43,7 +44,7 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 		}
 
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), sec.name)
-		_ = f.MergeCell(sheet, fmt.Sprintf("B%d", row), fmt.Sprintf("D%d", row))
+		_ = f.MergeCell(sheet, fmt.Sprintf("B%d", row), fmt.Sprintf("E%d", row))
 		row++
 
 		for _, p := range sec.projects {
@@ -59,13 +60,13 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 			stageParts := []textPart{
 				{label: "Проектом предполагается:\n", value: strings.TrimSpace(p.Description)},
 				{label: "Информация о стадии и ходе реализации:\n", value: strings.TrimSpace(p.Progress)},
-				{label: "Предоставленная мера поддержки:\n", value: strings.TrimSpace(p.Support)},
 			}
 			taskText := tasksByDeal[p.DealID]
 			addLabeledRichText(f, sheet, fmt.Sprintf("B%d", row), projectParts)
 			addLabeledRichText(f, sheet, fmt.Sprintf("C%d", row), stageParts)
 			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), taskText)
-			_ = f.SetRowHeight(sheet, row, estimateRowHeight(projectParts, stageParts, taskText))
+			f.SetCellValue(sheet, fmt.Sprintf("E%d", row), strings.TrimSpace(p.Support))
+			_ = f.SetRowHeight(sheet, row, estimateRowHeight(projectParts, stageParts, taskText, strings.TrimSpace(p.Support)))
 			num++
 			row++
 		}
@@ -214,17 +215,18 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int) error {
 	}
 
 	_ = f.SetRowHeight(sheet, 1, 32)
-	_ = f.SetCellStyle(sheet, "A1", "D1", headerStyle)
+	_ = f.SetCellStyle(sheet, "A1", "E1", headerStyle)
 	if lastRow >= 2 {
-		_ = f.SetCellStyle(sheet, "A2", fmt.Sprintf("D%d", lastRow), bodyStyle)
+		_ = f.SetCellStyle(sheet, "A2", fmt.Sprintf("E%d", lastRow), bodyStyle)
 		_ = f.SetCellStyle(sheet, "A2", fmt.Sprintf("A%d", lastRow), centerStyle)
 
 		for r := 2; r <= lastRow; r++ {
 			bVal, _ := f.GetCellValue(sheet, fmt.Sprintf("B%d", r))
 			cVal, _ := f.GetCellValue(sheet, fmt.Sprintf("C%d", r))
 			dVal, _ := f.GetCellValue(sheet, fmt.Sprintf("D%d", r))
-			if strings.TrimSpace(bVal) != "" && strings.TrimSpace(cVal) == "" && strings.TrimSpace(dVal) == "" {
-				_ = f.SetCellStyle(sheet, fmt.Sprintf("B%d", r), fmt.Sprintf("D%d", r), sectionStyle)
+			eVal, _ := f.GetCellValue(sheet, fmt.Sprintf("E%d", r))
+			if strings.TrimSpace(bVal) != "" && strings.TrimSpace(cVal) == "" && strings.TrimSpace(dVal) == "" && strings.TrimSpace(eVal) == "" {
+				_ = f.SetCellStyle(sheet, fmt.Sprintf("B%d", r), fmt.Sprintf("E%d", r), sectionStyle)
 				_ = f.SetRowHeight(sheet, r, 22)
 			}
 		}
@@ -265,13 +267,16 @@ type textPart struct {
 }
 
 // Функция по оценки высоты строк
-func estimateRowHeight(projectParts, stageParts []textPart, taskText string) float64 {
+func estimateRowHeight(projectParts, stageParts []textPart, taskText, supportText string) float64 {
 	// Приблизительно округляю строки по ширине столбца, чтобы пользователям не приходилось растягивать их вручную.
 	lines := wrappedTextLines(partsToPlainText(projectParts), 52)
 	if v := wrappedTextLines(partsToPlainText(stageParts), 52); v > lines {
 		lines = v
 	}
 	if v := wrappedTextLines(taskText, 52); v > lines {
+		lines = v
+	}
+	if v := wrappedTextLines(supportText, 42); v > lines {
 		lines = v
 	}
 	if lines < 3 {

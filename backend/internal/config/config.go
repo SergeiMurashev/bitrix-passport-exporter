@@ -10,20 +10,24 @@ import (
 )
 
 type Config struct {
-	Addr         string
-	Webhook      string
-	TaskWorkers  int
-	TaskStrategy string
+	Addr                     string
+	Webhook                  string
+	TaskWorkers              int
+	TaskStrategy             string
+	SupportLinkDealField     string
+	SupportMeasureValueField string
 }
 
 func Load() Config {
 	loadDotEnvIfPresent()
 
 	return Config{
-		Addr:         env("ADDR", ":25504"),
-		Webhook:      env("BITRIX_WEBHOOK_URL", ""),
-		TaskWorkers:  envInt("TASK_WORKERS", 10),
-		TaskStrategy: env("TASK_STRATEGY", "per_deal"),
+		Addr:                     env("ADDR", ":25504"),
+		Webhook:                  env("BITRIX_WEBHOOK_URL", ""),
+		TaskWorkers:              envInt("TASK_WORKERS", 10),
+		TaskStrategy:             env("TASK_STRATEGY", "per_deal"),
+		SupportLinkDealField:     env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
+		SupportMeasureValueField: env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
 	}
 }
 

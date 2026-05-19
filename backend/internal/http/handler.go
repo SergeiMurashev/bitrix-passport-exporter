@@ -133,6 +133,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	bClient.ConfigureSupportMapping(h.cfg.SupportLinkDealField, h.cfg.SupportMeasureValueField)
 
 	dealIDs, err := parseDealIDs(r.FormValue("deal_ids"), r.FormValue("deal_id"))
 	if err != nil {

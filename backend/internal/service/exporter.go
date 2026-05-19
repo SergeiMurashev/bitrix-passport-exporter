@@ -72,10 +72,10 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		projectID := 0
+		projectID := p.ProjectID
 		source := "deal.binding"
 
-		projectTasks, err := e.bitrix.GetDealTasks(ctx, p.DealID)
+		dealTasks, err := e.bitrix.GetDealTasks(ctx, p.DealID)
 		if err != nil {
 			if bitrix.IsAuthError(err) {
 				return fmt.Errorf("bitrix webhook auth failed: %w", err)
@@ -89,10 +89,9 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 			issuesMu.Lock()
 			issues = append(issues, fmt.Sprintf("deal_id=%d title=%q load deal-bound tasks error: %v", p.DealID, p.DealTitle, err))
 			issuesMu.Unlock()
-			projectTasks = nil
+			dealTasks = nil
 		}
-
-		if len(projectTasks) == 0 {
+		if projectID == 0 {
 			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(ctx, p, projectField, allowTitleFallback)
 			if resolveErr != nil {
 				if bitrix.IsAuthError(resolveErr) {
@@ -107,24 +106,17 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 				issuesMu.Lock()
 				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q resolve project error: %v", p.DealID, p.DealTitle, resolveErr))
 				issuesMu.Unlock()
-				return nil
+			} else {
+				projectID = resolvedProjectID
+				source = resolvedSource
 			}
+		}
 
-			projectID = resolvedProjectID
-			source = resolvedSource
-			if projectID == 0 {
-				statsMu.Lock()
-				stats.DealsWithoutProject++
-				statsMu.Unlock()
-				issuesMu.Lock()
-				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q linked project not found and deal-bound tasks are empty", p.DealID, p.DealTitle))
-				issuesMu.Unlock()
-				return nil
-			}
+		var projectTasks []map[string]any
+		if projectID > 0 {
 			statsMu.Lock()
 			stats.DealsWithProject++
 			statsMu.Unlock()
-
 			projectTasks, err = e.bitrix.GetProjectTasks(ctx, projectID)
 			if err != nil {
 				if bitrix.IsTimeoutError(err) || ctx.Err() != nil {
@@ -136,19 +128,25 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 				issuesMu.Lock()
 				issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d load project tasks error: %v", p.DealID, projectID, err))
 				issuesMu.Unlock()
-				return nil
+				projectTasks = nil
 			}
+		} else {
+			statsMu.Lock()
+			stats.DealsWithoutProject++
+			statsMu.Unlock()
 		}
 
-		if len(projectTasks) == 0 {
-			if projectID > 0 {
+		taskPool := mergeTaskPools(dealTasks, projectTasks)
+		if len(taskPool) == 0 {
+			if projectID > 0 && len(projectTasks) == 0 {
 				statsMu.Lock()
 				stats.ProjectsWithoutTasks++
 				statsMu.Unlock()
 				issuesMu.Lock()
 				issues = append(issues, fmt.Sprintf("deal_id=%d project_id=%d has no tasks", p.DealID, projectID))
 				issuesMu.Unlock()
-			} else {
+			}
+			if len(dealTasks) == 0 {
 				issuesMu.Lock()
 				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q has no deal-bound tasks", p.DealID, p.DealTitle))
 				issuesMu.Unlock()
@@ -161,8 +159,8 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 			statsMu.Unlock()
 		}
 
-		localTasks := make([]model.TaskRow, 0, len(projectTasks))
-		for _, t := range projectTasks {
+		localTasks := make([]model.TaskRow, 0, len(taskPool))
+		for _, t := range taskPool {
 			respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))
 			responsible := ""
 			if respID > 0 {
