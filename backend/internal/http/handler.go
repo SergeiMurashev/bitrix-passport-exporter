@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,7 +29,7 @@ type Handler struct {
 	mu             sync.Mutex
 	fullExportBusy bool
 	status         exportStatus
-	lastResult     []byte
+	lastResultPath string
 	lastFilename   string
 	lastUpdatedAt  time.Time
 }
@@ -400,13 +401,31 @@ func (h *Handler) setStatus(update func(*exportStatus)) {
 }
 
 func (h *Handler) storeLastResult(data []byte, filename string) {
+	if len(data) == 0 {
+		return
+	}
+	baseDir := filepath.Join(os.TempDir(), "bitrix-passport-exporter")
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		log.WithError(err).Warn("failed to prepare temp dir for last export")
+		return
+	}
+	tmpPath := filepath.Join(baseDir, fmt.Sprintf("last-export-%d.xlsx", time.Now().UnixNano()))
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		log.WithError(err).Warn("failed to persist last export to disk")
+		return
+	}
+
 	h.mu.Lock()
+	oldPath := h.lastResultPath
 	defer h.mu.Unlock()
-	h.lastResult = append([]byte(nil), data...)
+	h.lastResultPath = tmpPath
 	h.lastFilename = filename
 	h.lastUpdatedAt = time.Now().UTC()
 	h.status.HasLastResult = true
 	h.status.LastFileName = filename
+	if strings.TrimSpace(oldPath) != "" && oldPath != tmpPath {
+		_ = os.Remove(oldPath)
+	}
 }
 
 func (h *Handler) markStatusError(message string) {
@@ -436,20 +455,26 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.mu.Lock()
-	data := append([]byte(nil), h.lastResult...)
+	path := strings.TrimSpace(h.lastResultPath)
 	filename := h.lastFilename
 	h.mu.Unlock()
-	if len(data) == 0 {
+	if path == "" {
 		http.Error(w, "no ready export file", http.StatusNotFound)
 		return
 	}
 	if strings.TrimSpace(filename) == "" {
 		filename = "bitrix_last_export_passport_and_tasks.xlsx"
 	}
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		http.Error(w, "no ready export file", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(data); err != nil {
+	if _, err := io.Copy(w, f); err != nil {
 		log.WithError(err).Warn("download last export write failed")
 	}
 }
