@@ -847,7 +847,9 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 		Description:  description,
 		ProjectStage: stageName,
 		Progress:     progress,
-		Support:      enumValue(enumLabels, dealFieldSupportMeasure, toString(anyMapGet(deal, dealFieldSupportMeasure))),
+		// "Меры поддержки по проекту" в итоговом паспорте должны заполняться только
+		// из поля-связки на сделки (UF_CRM_1770268007), без fallback на enum-поле.
+		Support: "",
 		DateRange: strings.TrimSpace(strings.TrimSpace(toString(anyMapGet(deal, "BEGINDATE"))) +
 			func() string {
 				end := strings.TrimSpace(toString(anyMapGet(deal, "CLOSEDATE")))
@@ -949,15 +951,12 @@ func (c *Client) loadSupportValuesByDealIDs(ctx context.Context, ids []int, enum
 				stageName = strings.TrimSpace(meta.Name)
 			}
 			measure := strings.TrimSpace(enumValue(enumLabels, field, toString(anyMapGet(item, field))))
-			if measure == "" {
-				measure = title
-			}
 
 			parts := make([]string, 0, 4)
 			if title != "" {
 				parts = append(parts, title)
 			}
-			if measure != "" {
+			if measure != "" && !strings.EqualFold(measure, title) {
 				parts = append(parts, "мера: "+measure)
 			}
 			if stageName != "" {
