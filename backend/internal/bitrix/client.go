@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -52,7 +53,9 @@ const (
 	dealFieldMunicipality    = "UF_CRM_1744714512203"
 	dealFieldInvestor        = "UF_CRM_1744714565237"
 	dealFieldDescription     = "UF_CRM_1744714620"
-	dealFieldJobsPlan        = "UF_CRM_1744714707223"
+	dealFieldJobsLegacy      = "UF_CRM_1744714707223"
+	dealFieldJobsPlan        = "UF_CRM_1744714988934"
+	dealFieldJobsFact        = "UF_CRM_1744715006903"
 	dealFieldAddress         = "UF_CRM_1744715247985"
 	dealFieldIdentifier      = "UF_CRM_1744715286104"
 	dealFieldInvestTotalPlan = "UF_CRM_1750245213304"
@@ -107,7 +110,9 @@ func (c *Client) dealSelectFields(extra ...string) []string {
 		dealFieldMunicipality,
 		dealFieldInvestor,
 		dealFieldDescription,
+		dealFieldJobsLegacy,
 		dealFieldJobsPlan,
+		dealFieldJobsFact,
 		dealFieldAddress,
 		dealFieldIdentifier,
 		dealFieldInvestTotalPlan,
@@ -858,7 +863,11 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 				}
 				return " - " + end
 			}()),
-		Jobs: strings.TrimSpace(toString(anyMapGet(deal, dealFieldJobsPlan))),
+		Jobs: firstNonEmpty(
+			normalizeJobs(toString(anyMapGet(deal, dealFieldJobsLegacy))),
+			normalizeJobs(toString(anyMapGet(deal, dealFieldJobsFact))),
+			normalizeJobs(toString(anyMapGet(deal, dealFieldJobsPlan))),
+		),
 		InvestPlan: firstNonEmpty(
 			strings.TrimSpace(toString(anyMapGet(deal, dealFieldInvestTotalPlan))),
 			normalizeMoney(toString(anyMapGet(deal, "OPPORTUNITY", "opportunity"))),
@@ -866,6 +875,31 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 		OwnPlan:  strings.TrimSpace(toString(anyMapGet(deal, dealFieldOwnPlan))),
 		LoanPlan: strings.TrimSpace(toString(anyMapGet(deal, dealFieldLoanPlan))),
 	}
+}
+
+func normalizeJobs(v string) string {
+	s := strings.TrimSpace(strings.ReplaceAll(v, ",", "."))
+	if s == "" {
+		return ""
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		if f <= 0 {
+			return ""
+		}
+		r := math.Round(f)
+		if math.Abs(f-r) > 1e-9 {
+			return ""
+		}
+		return strconv.Itoa(int(r))
+	}
+	m := regexp.MustCompile(`\d+`).FindString(s)
+	if m == "" {
+		return ""
+	}
+	if n, err := strconv.Atoi(m); err == nil && n > 0 {
+		return strconv.Itoa(n)
+	}
+	return ""
 }
 
 func (c *Client) applySupportFromLinkedDeals(ctx context.Context, items []map[string]any, rows []model.ProjectRow, enumLabels map[string]map[string]string) {
