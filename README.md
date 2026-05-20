@@ -48,6 +48,13 @@ docker compose up -d --build
 - `BITRIX_WEBHOOK_URL` (обязателен)
 - `TASK_WORKERS` (default `10`)
 - `TASK_STRATEGY` (`per_deal` или `bulk`)
+- `SUPPORT_LINK_DEAL_FIELD` (default `UF_CRM_1770268007`)
+- `SUPPORT_MEASURE_VALUE_FIELD` (default `UF_CRM_1744702884242`)
+- `API_ACCESS_TOKEN` (опционально, защищает `/api/*`)
+
+Если задан `API_ACCESS_TOKEN`, доступ к `/api/*` разрешен только с токеном.
+`/healthz` и UI остаются доступными без авторизации.
+При `API_ACCESS_TOKEN` UI работает автоматически: сервер выставляет `HttpOnly` cookie для запросов к `/api/*`.
 
 ## API
 - `GET /healthz`

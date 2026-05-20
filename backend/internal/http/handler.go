@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,24 +62,68 @@ func New(cfg config.Config) *Handler {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
 	logRoute("GET", "/healthz", "Handler.healthz", 0)
+	guard := h.withAccessControl
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), "assets")))))
 	logRoute("GET", "/assets/*", "http.FileServer", 0)
 	mux.Handle("/logo1.png", http.FileServer(http.Dir(frontendDistDir())))
 	logRoute("GET", "/logo1.png", "http.FileServer", 0)
-	mux.HandleFunc("/", h.ui)
+	mux.Handle("/", http.HandlerFunc(h.ui))
 	logRoute("GET", "/", "Handler.ui", 0)
 	// Сервисные вызовы
-	mux.HandleFunc("/api/deals/ids", h.dealIDs)
+	mux.Handle("/api/deals/ids", guard(http.HandlerFunc(h.dealIDs)))
 	logRoute("GET", "/api/deals/ids", "Handler.dealIDs", 0)
-	mux.HandleFunc("/api/deals/fields", h.dealFields)
+	mux.Handle("/api/deals/fields", guard(http.HandlerFunc(h.dealFields)))
 	logRoute("GET", "/api/deals/fields", "Handler.dealFields", 0)
-	mux.HandleFunc("/api/export/status", h.exportStatus)
+	mux.Handle("/api/export/status", guard(http.HandlerFunc(h.exportStatus)))
 	logRoute("GET", "/api/export/status", "Handler.exportStatus", 0)
-	mux.HandleFunc("/api/export/download-last", h.downloadLastExport)
+	mux.Handle("/api/export/download-last", guard(http.HandlerFunc(h.downloadLastExport)))
 	logRoute("GET", "/api/export/download-last", "Handler.downloadLastExport", 0)
 	// Основной вызов
-	mux.HandleFunc("/api/export", h.export)
+	mux.Handle("/api/export", guard(http.HandlerFunc(h.export)))
 	logRoute("POST", "/api/export", "Handler.export", 0)
+}
+
+func (h *Handler) withAccessControl(next http.Handler) http.Handler {
+	token := strings.TrimSpace(h.cfg.APIAccessToken)
+	useToken := token != ""
+	if !useToken {
+		return next
+	}
+
+	unauthorized := func(w http.ResponseWriter) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+
+	tokenAllowed := func(r *http.Request) bool {
+		candidates := []string{
+			strings.TrimSpace(r.Header.Get("X-API-Key")),
+			strings.TrimSpace(r.Header.Get("X-Access-Token")),
+		}
+		if c, err := r.Cookie("bp_api_token"); err == nil {
+			candidates = append(candidates, strings.TrimSpace(c.Value))
+		}
+		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			candidates = append(candidates, strings.TrimSpace(authHeader[7:]))
+		}
+		for _, c := range candidates {
+			if c == "" {
+				continue
+			}
+			if subtle.ConstantTimeCompare([]byte(c), []byte(token)) == 1 {
+				return true
+			}
+		}
+		return false
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tokenAllowed(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		unauthorized(w)
+	})
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
@@ -99,6 +144,17 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "frontend is not built; run frontend build", http.StatusServiceUnavailable)
 		return
+	}
+	if token := strings.TrimSpace(h.cfg.APIAccessToken); token != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "bp_api_token",
+			Value:    token,
+			Path:     "/api",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   r.TLS != nil,
+			MaxAge:   30 * 24 * 60 * 60,
+		})
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(body)

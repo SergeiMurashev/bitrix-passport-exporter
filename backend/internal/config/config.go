@@ -16,6 +16,7 @@ type Config struct {
 	TaskStrategy             string
 	SupportLinkDealField     string
 	SupportMeasureValueField string
+	APIAccessToken           string
 }
 
 func Load() Config {
@@ -28,6 +29,7 @@ func Load() Config {
 		TaskStrategy:             env("TASK_STRATEGY", "per_deal"),
 		SupportLinkDealField:     env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
 		SupportMeasureValueField: env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
+		APIAccessToken:           env("API_ACCESS_TOKEN", ""),
 	}
 }
 

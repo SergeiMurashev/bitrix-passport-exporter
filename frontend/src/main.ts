@@ -149,6 +149,10 @@ function humanizeError(message: string): string {
       userText: 'Слишком много запросов. Подождите немного и повторите.',
     },
     {
+      test: (t) => t.includes('unauthorized') || t.includes('http 401'),
+      userText: 'Доступ запрещен. Перезагрузите страницу и повторите попытку.',
+    },
+    {
       test: (t) => t.includes('http 500') || t.includes('http 502') || t.includes('http 503') || t.includes('http 504'),
       userText: 'Временная ошибка сервера. Повторите попытку чуть позже.',
     },
@@ -203,11 +207,24 @@ form.addEventListener('submit', async (e) => {
 })
 
 downloadLastBtn.addEventListener('click', () => {
-  const a = document.createElement('a')
-  a.href = '/api/export/download-last'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
+  void (async () => {
+    try {
+      const res = await fetch('/api/export/download-last')
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
+      const blob = await res.blob()
+      const fileName = 'bitrix_last_export_passport_and_tasks.xlsx'
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setStatus(humanizeError((error as Error).message || ''), 'err')
+    }
+  })()
 })
 
 async function refreshExportStatus() {
@@ -250,5 +267,33 @@ async function refreshExportStatus() {
   }
 }
 
-setInterval(refreshExportStatus, 3000)
+const statusPollIntervalMs = 7000
+let statusPollTimer: number | null = null
+
+function stopStatusPolling() {
+  if (statusPollTimer !== null) {
+    window.clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
+}
+
+function startStatusPolling() {
+  if (statusPollTimer !== null) return
+  statusPollTimer = window.setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      void refreshExportStatus()
+    }
+  }, statusPollIntervalMs)
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    startStatusPolling()
+    void refreshExportStatus()
+    return
+  }
+  stopStatusPolling()
+})
+
+startStatusPolling()
 void refreshExportStatus()
