@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,28 +27,32 @@ import (
 )
 
 type Handler struct {
-	cfg            config.Config
-	mu             sync.Mutex
-	fullExportBusy bool
-	status         exportStatus
-	lastResultPath string
-	lastFilename   string
-	lastUpdatedAt  time.Time
+	cfg                   config.Config
+	mu                    sync.Mutex
+	fullExportBusy        bool
+	fullExportCancel      context.CancelFunc
+	cancelRequestedByUser bool
+	status                exportStatus
+	lastResultPath        string
+	lastFilename          string
+	lastUpdatedAt         time.Time
 }
 
 const projectFieldCode = "UF_CRM_PROJECT_GROUP_ID"
 
 type exportStatus struct {
-	Running        bool      `json:"running"`
-	Phase          string    `json:"phase"`
-	DealsProcessed int       `json:"deals_processed"`
-	DealsTotal     int       `json:"deals_total"`
-	TasksTotal     int       `json:"tasks_total"`
-	HasLastResult  bool      `json:"has_last_result"`
-	LastFileName   string    `json:"last_file_name,omitempty"`
-	StartedAt      time.Time `json:"started_at,omitempty"`
-	FinishedAt     time.Time `json:"finished_at,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
+	Running         bool      `json:"running"`
+	CanCancel       bool      `json:"can_cancel"`
+	CancelRequested bool      `json:"cancel_requested"`
+	Phase           string    `json:"phase"`
+	DealsProcessed  int       `json:"deals_processed"`
+	DealsTotal      int       `json:"deals_total"`
+	TasksTotal      int       `json:"tasks_total"`
+	HasLastResult   bool      `json:"has_last_result"`
+	LastFileName    string    `json:"last_file_name,omitempty"`
+	StartedAt       time.Time `json:"started_at,omitempty"`
+	FinishedAt      time.Time `json:"finished_at,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
 }
 
 func New(cfg config.Config) *Handler {
@@ -78,6 +83,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	logRoute("GET", "/api/export/status", "Handler.exportStatus", 0)
 	mux.Handle("/api/export/download-last", guard(http.HandlerFunc(h.downloadLastExport)))
 	logRoute("GET", "/api/export/download-last", "Handler.downloadLastExport", 0)
+	mux.Handle("/api/export/cancel", guard(http.HandlerFunc(h.cancelExport)))
+	logRoute("POST", "/api/export/cancel", "Handler.cancelExport", 0)
 	// Основной вызов
 	mux.Handle("/api/export", guard(http.HandlerFunc(h.export)))
 	logRoute("POST", "/api/export", "Handler.export", 0)
@@ -211,28 +218,47 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				h.finishFullExport()
 			}
 		}()
-		h.setStatus(func(s *exportStatus) {
-			s.Running = true
-			s.Phase = "passport"
-			s.DealsProcessed = 0
-			s.DealsTotal = 0
-			s.TasksTotal = 0
-			s.StartedAt = time.Now().UTC()
-			s.FinishedAt = time.Time{}
-			s.LastError = ""
-		})
 	}
 
-	projects, sourceLabel, err := h.loadProjects(r, bClient, dealIDs)
+	exportTimeout := 12 * time.Minute
+	if isFullExport {
+		// Полный экспорт по тысячам сделок: даем больше времени.
+		exportTimeout = 35 * time.Minute
+	}
+	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
+	// В противном случае прерывания загрузки/выгрузки отменяют вызовы Битрикса в процессе выполнения.
+	ctx, cancel := context.WithTimeout(context.Background(), exportTimeout)
+	defer cancel()
+	h.setExportCancel(cancel)
+	defer h.clearExportCancel()
+
+	h.setStatus(func(s *exportStatus) {
+		s.Running = true
+		s.CanCancel = true
+		s.CancelRequested = false
+		s.Phase = "passport"
+		s.DealsProcessed = 0
+		s.DealsTotal = 0
+		s.TasksTotal = 0
+		s.StartedAt = time.Now().UTC()
+		s.FinishedAt = time.Time{}
+		s.LastError = ""
+	})
+
+	projects, sourceLabel, err := h.loadProjects(ctx, r, bClient, dealIDs)
 	if err != nil {
-		if isFullExport {
-			h.markStatusError(err.Error())
+		if isCanceledErr(err) {
+			h.markStatusCanceledByUser()
+			http.Error(w, "export canceled by user", http.StatusConflict)
+			return
 		}
+		h.markStatusError(err.Error())
 		log.WithError(err).WithField("deal_ids", dealIDs).Error("export load projects failed")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(projects) == 0 && sourceLabel != "bitrix_api" {
+		h.markStatusError("no projects found")
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
@@ -245,17 +271,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
 	isFullBitrixExport := sourceLabel == "bitrix_api"
-	exportTimeout := 12 * time.Minute
 	allowTitleFallback := true
 	if isFullBitrixExport {
-		// Полный экспорт по тысячам сделок: даем больше времени и отключаем дорогой fallback поиска проекта по названию.
-		exportTimeout = 35 * time.Minute
+		// Полный экспорт по тысячам сделок: отключаем дорогой fallback поиска проекта по названию.
 		allowTitleFallback = false
 	}
-	// Не привязывайте длинный экспорт к запросу отмены из браузера/клиента.
-	// В противном случае прерывания загрузки/выгрузки отменяют вызовы Битрикса в процессе выполнения.
-	ctx, cancel := context.WithTimeout(context.Background(), exportTimeout)
-	defer cancel()
 	var (
 		tasks  []model.TaskRow
 		stats  service.ExportStats
@@ -270,6 +290,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
+				if isCanceledErr(pageErr) {
+					h.markStatusCanceledByUser()
+					http.Error(w, "export canceled by user", http.StatusConflict)
+					return
+				}
 				h.markStatusError("failed to load deals page: " + pageErr.Error())
 				http.Error(w, "failed to load deals page: "+pageErr.Error(), http.StatusInternalServerError)
 				return
@@ -309,6 +334,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
 			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, projectField, allowTitleFallback)
 			if allErr != nil {
+				if isCanceledErr(allErr) {
+					h.markStatusCanceledByUser()
+					http.Error(w, "export canceled by user", http.StatusConflict)
+					return
+				}
 				h.markStatusError("failed to collect tasks: " + allErr.Error())
 				if strings.Contains(allErr.Error(), "webhook auth failed") {
 					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
@@ -339,6 +369,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				chunk := allProjects[i:end]
 				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, projectField, allowTitleFallback)
 				if chunkErr != nil {
+					if isCanceledErr(chunkErr) {
+						h.markStatusCanceledByUser()
+						http.Error(w, "export canceled by user", http.StatusConflict)
+						return
+					}
 					h.markStatusError("failed to collect tasks: " + chunkErr.Error())
 					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
 						http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
@@ -375,6 +410,12 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		var callErr error
 		tasks, stats, issues, callErr = svc.BuildTasks(ctx, projects, projectField, allowTitleFallback)
 		if callErr != nil {
+			if isCanceledErr(callErr) {
+				h.markStatusCanceledByUser()
+				http.Error(w, "export canceled by user", http.StatusConflict)
+				return
+			}
+			h.markStatusError("failed to collect tasks: " + callErr.Error())
 			if strings.Contains(callErr.Error(), "webhook auth failed") {
 				http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
 				return
@@ -399,9 +440,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	result, err := export.BuildResultXLSX(projects, tasks)
 	if err != nil {
-		if isFullExport {
-			h.markStatusError("failed to build xlsx: " + err.Error())
-		}
+		h.markStatusError("failed to build xlsx: " + err.Error())
 		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -412,14 +451,14 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	filename := buildDownloadFilename(sourceLabel, dealIDs)
 	h.storeLastResult(result, filename)
-	if isFullExport {
-		h.setStatus(func(s *exportStatus) {
-			s.Running = false
-			s.Phase = "idle"
-			s.FinishedAt = time.Now().UTC()
-			s.LastError = ""
-		})
-	}
+	h.setStatus(func(s *exportStatus) {
+		s.Running = false
+		s.CanCancel = false
+		s.CancelRequested = false
+		s.Phase = "idle"
+		s.FinishedAt = time.Now().UTC()
+		s.LastError = ""
+	})
 	w.Header().Set("X-Export-Success", "true")
 	w.Header().Set("X-Export-Source", sourceLabel)
 	w.Header().Set("X-Export-Deals-Total", strconv.Itoa(stats.DealsTotal))
@@ -447,6 +486,20 @@ func (h *Handler) tryStartFullExport() bool {
 func (h *Handler) finishFullExport() {
 	h.mu.Lock()
 	h.fullExportBusy = false
+	h.mu.Unlock()
+}
+
+func (h *Handler) setExportCancel(cancel context.CancelFunc) {
+	h.mu.Lock()
+	h.fullExportCancel = cancel
+	h.cancelRequestedByUser = false
+	h.mu.Unlock()
+}
+
+func (h *Handler) clearExportCancel() {
+	h.mu.Lock()
+	h.fullExportCancel = nil
+	h.cancelRequestedByUser = false
 	h.mu.Unlock()
 }
 
@@ -487,8 +540,21 @@ func (h *Handler) storeLastResult(data []byte, filename string) {
 func (h *Handler) markStatusError(message string) {
 	h.setStatus(func(s *exportStatus) {
 		s.Running = false
+		s.CanCancel = false
+		s.CancelRequested = false
 		s.Phase = "error"
 		s.LastError = message
+		s.FinishedAt = time.Now().UTC()
+	})
+}
+
+func (h *Handler) markStatusCanceledByUser() {
+	h.setStatus(func(s *exportStatus) {
+		s.Running = false
+		s.CanCancel = false
+		s.CancelRequested = false
+		s.Phase = "canceled"
+		s.LastError = "export canceled by user"
 		s.FinishedAt = time.Now().UTC()
 	})
 }
@@ -503,6 +569,46 @@ func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(status)
+}
+
+func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.mu.Lock()
+	cancel := h.fullExportCancel
+	if !h.status.Running || cancel == nil {
+		h.mu.Unlock()
+		http.Error(w, "no export is running", http.StatusConflict)
+		return
+	}
+	alreadyRequested := h.cancelRequestedByUser
+	h.cancelRequestedByUser = true
+	h.status.CancelRequested = true
+	h.mu.Unlock()
+
+	if !alreadyRequested {
+		cancel()
+		log.Info("full export cancel requested by user")
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":               true,
+		"cancel_requested": true,
+	})
+}
+
+func isCanceledErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "context canceled")
 }
 
 func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
@@ -612,7 +718,7 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]model.ProjectRow, string, error) {
+func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]model.ProjectRow, string, error) {
 	file, fh, err := r.FormFile("file")
 	if err == nil {
 		defer file.Close()
@@ -631,8 +737,6 @@ func (h *Handler) loadProjects(r *http.Request, bClient *bitrix.Client, dealIDs 
 		return nil, "bitrix_api", nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
 	projects, err := bClient.GetDealsByIDs(ctx, dealIDs)
 	if err != nil {
 		if bitrix.IsAuthError(err) {

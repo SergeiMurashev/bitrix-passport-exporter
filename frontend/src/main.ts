@@ -3,6 +3,8 @@ import './styles.css'
 type Mode = 'all' | 'ids' | 'file'
 type ExportStatus = {
   running: boolean
+  can_cancel?: boolean
+  cancel_requested?: boolean
   phase: string
   deals_processed: number
   deals_total: number
@@ -16,7 +18,7 @@ const root = document.getElementById('root') as HTMLDivElement
 root.innerHTML = `
   <div class="page">
     <main class="card">
-      <h1>Выгрузка паспорта проекта + задач</h1>
+      <h1>Выгрузка паспорта проекта</h1>
       <p class="subtitle">Выберите один режим и сформируйте XLSX.</p>
 
       <form id="export-form">
@@ -34,7 +36,10 @@ root.innerHTML = `
           <input id="file" type="file" accept=".xls,.xlsx,.html" />
         </div>
 
-        <button id="submit" type="submit">Сформировать XLSX</button>
+        <div class="actions">
+          <button id="submit" type="submit">Сформировать XLSX</button>
+          <button id="cancel-export" class="danger hidden" type="button">Отменить выгрузку</button>
+        </div>
         <button id="download-last" class="hidden" type="button">Скачать готовый файл</button>
       </form>
       <div id="progress-wrap" class="progress-wrap hidden" aria-live="polite">
@@ -58,6 +63,7 @@ const statusEl = document.getElementById('status') as HTMLParagraphElement
 const dealIdsEl = document.getElementById('deal-ids') as HTMLInputElement
 const fileEl = document.getElementById('file') as HTMLInputElement
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
+const cancelExportBtn = document.getElementById('cancel-export') as HTMLButtonElement
 const downloadLastBtn = document.getElementById('download-last') as HTMLButtonElement
 const progressWrap = document.getElementById('progress-wrap') as HTMLDivElement
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement
@@ -100,6 +106,14 @@ function humanizeError(message: string): string {
   if (!text) return 'Не удалось сформировать файл. Повторите попытку.'
 
   const rules: Array<{ test: (t: string) => boolean; userText: string }> = [
+    {
+      test: (t) => t.includes('no export is running'),
+      userText: 'Нет активной выгрузки для отмены.',
+    },
+    {
+      test: (t) => t.includes('export canceled by user') || t.includes('context canceled') || t.includes('http 409'),
+      userText: 'Выгрузка отменена.',
+    },
     {
       test: (t) => t.includes('deal_ids not found') || t.includes('not found in crm.deal.list'),
       userText: 'Сделка не найдена в Bitrix24. Проверьте ID сделки и попробуйте снова.',
@@ -166,13 +180,21 @@ function humanizeError(message: string): string {
 
 form.addEventListener('change', (e) => {
   const target = e.target as HTMLInputElement
-  if (target.name === 'mode') setMode(target.value as Mode)
+  if (target.name === 'mode') {
+    setMode(target.value as Mode)
+    if (!lastRunning) {
+      setStatus('', 'muted')
+    }
+  }
 })
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault()
   submitBtn.disabled = true
   submitBtn.textContent = 'Формируем...'
+  cancelExportBtn.classList.remove('hidden')
+  cancelExportBtn.disabled = false
+  cancelExportBtn.textContent = 'Отменить выгрузку'
   setProgress(true, 'Подготовка экспорта')
   setStatus('Формируем файл. Для полной выгрузки потребуется некоторое время.', 'muted')
 
@@ -203,7 +225,24 @@ form.addEventListener('submit', async (e) => {
   } finally {
     submitBtn.disabled = false
     submitBtn.textContent = 'Сформировать XLSX'
+    cancelExportBtn.classList.add('hidden')
+    cancelExportBtn.disabled = false
   }
+})
+
+cancelExportBtn.addEventListener('click', () => {
+  void (async () => {
+    cancelExportBtn.disabled = true
+    try {
+      const res = await fetch('/api/export/cancel', { method: 'POST' })
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
+      setStatus('Запрос на отмену отправлен. Ожидайте остановки выгрузки.', 'muted')
+      await refreshExportStatus()
+    } catch (error) {
+      setStatus(humanizeError((error as Error).message || ''), 'err')
+      cancelExportBtn.disabled = false
+    }
+  })()
 })
 
 downloadLastBtn.addEventListener('click', () => {
@@ -237,6 +276,13 @@ async function refreshExportStatus() {
       submitBtn.disabled = true
       submitBtn.textContent = 'Формируем...'
       downloadLastBtn.classList.add('hidden')
+      if (data.can_cancel) {
+        cancelExportBtn.classList.remove('hidden')
+        cancelExportBtn.disabled = !!data.cancel_requested
+        cancelExportBtn.textContent = data.cancel_requested ? 'Отмена запрошена...' : 'Отменить выгрузку'
+      } else {
+        cancelExportBtn.classList.add('hidden')
+      }
       setProgress(true, detectPhase(data))
       const total = data.deals_total > 0 ? data.deals_total : '?'
       setStatus(`Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}.`, 'muted')
@@ -251,6 +297,9 @@ async function refreshExportStatus() {
       }
       submitBtn.disabled = false
       submitBtn.textContent = 'Сформировать XLSX'
+      cancelExportBtn.classList.add('hidden')
+      cancelExportBtn.disabled = false
+      cancelExportBtn.textContent = 'Отменить выгрузку'
       if (data.has_last_result) {
         downloadLastBtn.classList.remove('hidden')
         downloadLastBtn.textContent = data.last_file_name

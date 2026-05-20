@@ -75,6 +75,12 @@ input[type="text"], input[type="file"] {
 #ids-wrap, #file-wrap { margin: 12px 0; }
 .hidden { display: none; }
 
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 button {
   margin-top: 10px;
   border: 0;
@@ -87,6 +93,10 @@ button {
 }
 
 button:disabled { opacity: .7; cursor: not-allowed; }
+
+button.danger {
+  background: linear-gradient(90deg, #f36b6b, #c83838);
+}
 
 .status { margin-top: 12px; }
 .status.ok { color: #70e8a0; }
