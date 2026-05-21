@@ -23,6 +23,8 @@ type ExportStats struct {
 	DealsWithProject     int
 	DealsWithoutProject  int
 	DealsResolveErrors   int
+	DealsWithSupport     int
+	SupportMeasuresTotal int
 	ProjectsWithTasks    int
 	ProjectsWithoutTasks int
 	TasksTotal           int

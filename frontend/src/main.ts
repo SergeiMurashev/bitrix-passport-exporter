@@ -11,6 +11,8 @@ type ExportStatus = {
   deals_processed: number
   deals_total: number
   tasks_total: number
+  deals_with_support?: number
+  support_measures_total?: number
   has_last_result: boolean
   last_file_name?: string
   last_error?: string
@@ -397,7 +399,11 @@ form.addEventListener('submit', async (e) => {
     a.remove()
     URL.revokeObjectURL(url)
 
-    setStatus(`Готово. Сделок: ${res.headers.get('x-export-deals-total') || '-'}, задач: ${res.headers.get('x-export-tasks-total') || '-'}.`, 'ok')
+    setStatus(
+      `Готово. Сделок: ${res.headers.get('x-export-deals-total') || '-'}, задач: ${res.headers.get('x-export-tasks-total') || '-'}, ` +
+      `сделок с мерами: ${res.headers.get('x-export-deals-with-support') || '-'}, мер поддержки: ${res.headers.get('x-export-support-measures-total') || '-'}.`,
+      'ok',
+    )
     setProgress(false)
   } catch (error) {
     setStatus(humanizeError((error as Error).message || ''), 'err')
@@ -471,14 +477,26 @@ async function refreshExportStatus() {
       }
       setProgress(true, detectPhase(data))
       const total = data.deals_total > 0 ? data.deals_total : '?'
-      setStatus(`Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}.`, 'muted')
+      const supportDeals = data.deals_with_support ?? 0
+      const supportMeasures = data.support_measures_total ?? 0
+      setStatus(
+        `Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}, ` +
+        `сделок с мерами ${supportDeals}, мер поддержки ${supportMeasures}.`,
+        'muted',
+      )
     } else {
       setProgress(false)
       if (lastRunning) {
         if (data.last_error) {
           setStatus(`Выгрузка завершилась с ошибкой: ${humanizeError(data.last_error)}`, 'err')
         } else {
-          setStatus('Выгрузка завершена. Нажмите кнопку ниже, чтобы скачать готовый файл.', 'ok')
+          const supportDeals = data.deals_with_support ?? 0
+          const supportMeasures = data.support_measures_total ?? 0
+          setStatus(
+            `Выгрузка завершена. Сделок: ${data.deals_total}, задач: ${data.tasks_total}, ` +
+            `сделок с мерами: ${supportDeals}, мер поддержки: ${supportMeasures}. Нажмите кнопку ниже, чтобы скачать готовый файл.`,
+            'ok',
+          )
         }
       }
       submitBtn.disabled = false

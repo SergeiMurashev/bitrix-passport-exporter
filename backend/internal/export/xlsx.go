@@ -6,9 +6,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
 	"github.com/xuri/excelize/v2"
+)
+
+var (
+	richFontNormal = &excelize.Font{Family: "Arial", Size: 11}
+	richFontBold   = &excelize.Font{Bold: true, Family: "Arial", Size: 11}
 )
 
 func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte, error) {
@@ -50,25 +56,39 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 		row++
 
 		for _, p := range sec.projects {
+			dealTitle := strings.TrimSpace(p.DealTitle)
+			location := strings.TrimSpace(p.Location)
+			investor := strings.TrimSpace(p.Investor)
+			investPlan := strings.TrimSpace(p.InvestPlan)
+			dateRange := strings.TrimSpace(p.DateRange)
+			jobs := strings.TrimSpace(p.Jobs)
+			description := strings.TrimSpace(p.Description)
+			progress := strings.TrimSpace(p.Progress)
+			support := strings.TrimSpace(p.Support)
+			taskText := tasksByDeal[p.DealID]
+
 			f.SetCellValue(sheet, fmt.Sprintf("A%d", row), num)
 			projectParts := []textPart{
-				{value: strings.TrimSpace(p.DealTitle), bold: true},
-				{label: "Местоположение: ", value: strings.TrimSpace(p.Location)},
-				{label: "Организация-инвестор: ", value: strings.TrimSpace(p.Investor)},
-				{label: "Объём инвестиций: ", value: strings.TrimSpace(p.InvestPlan)},
-				{label: "Срок реализации: ", value: strings.TrimSpace(p.DateRange)},
-				{label: "Количество рабочих мест: ", value: strings.TrimSpace(p.Jobs)},
+				{value: dealTitle, bold: true},
+				{label: "Местоположение: ", value: location},
+				{label: "Организация-инвестор: ", value: investor},
+				{label: "Объём инвестиций: ", value: investPlan},
+				{label: "Срок реализации: ", value: dateRange},
+				{label: "Количество рабочих мест: ", value: jobs},
 			}
 			stageParts := []textPart{
-				{label: "Проектом предполагается:\n", value: strings.TrimSpace(p.Description)},
-				{label: "Информация о стадии и ходе реализации:\n", value: strings.TrimSpace(p.Progress)},
+				{label: "Проектом предполагается:\n", value: description},
+				{label: "Информация о стадии и ходе реализации:\n", value: progress},
 			}
-			taskText := tasksByDeal[p.DealID]
 			addLabeledRichText(f, sheet, fmt.Sprintf("B%d", row), projectParts)
 			addLabeledRichText(f, sheet, fmt.Sprintf("C%d", row), stageParts)
-			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), taskText)
-			f.SetCellValue(sheet, fmt.Sprintf("E%d", row), strings.TrimSpace(p.Support))
-			h := estimateRowHeight(projectParts, stageParts, taskText, strings.TrimSpace(p.Support))
+			if taskText != "" {
+				f.SetCellValue(sheet, fmt.Sprintf("D%d", row), taskText)
+			}
+			if support != "" {
+				f.SetCellValue(sheet, fmt.Sprintf("E%d", row), support)
+			}
+			h := estimateRowHeight(projectParts, stageParts, taskText, support)
 			if err := f.SetRowHeight(sheet, row, h); err != nil {
 				// Защита от ограничений Excel/Numbers по высоте строки.
 				_ = f.SetRowHeight(sheet, row, 409)
@@ -239,28 +259,33 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int, sectionRows
 }
 
 func addLabeledRichText(f *excelize.File, sheet, cell string, parts []textPart) {
-	runs := make([]excelize.RichTextRun, 0, len(parts)*3)
+	runs := make([]excelize.RichTextRun, 0, len(parts)*2)
 	for i, p := range parts {
 		if strings.TrimSpace(p.label) != "" {
 			runs = append(runs, excelize.RichTextRun{
 				Text: p.label,
-				Font: &excelize.Font{Bold: true, Family: "Arial", Size: 11},
+				Font: richFontBold,
 			})
+		}
+		valueText := strings.TrimSpace(p.value)
+		if i < len(parts)-1 {
+			valueText += "\n"
 		}
 		runs = append(runs, excelize.RichTextRun{
-			Text: strings.TrimSpace(p.value),
-			Font: &excelize.Font{Bold: p.bold, Family: "Arial", Size: 11},
+			Text: valueText,
+			Font: choosePartFont(p.bold),
 		})
-		if i < len(parts)-1 {
-			runs = append(runs, excelize.RichTextRun{
-				Text: "\n",
-				Font: &excelize.Font{Family: "Arial", Size: 11},
-			})
-		}
 	}
 	if len(runs) > 0 {
 		_ = f.SetCellRichText(sheet, cell, runs)
 	}
+}
+
+func choosePartFont(isBold bool) *excelize.Font {
+	if isBold {
+		return richFontBold
+	}
+	return richFontNormal
 }
 
 type textPart struct {
@@ -274,8 +299,8 @@ func estimateRowHeight(projectParts, stageParts []textPart, taskText, supportTex
 	// Приблизительно округляю строки по ширине столбца, чтобы пользователям не приходилось растягивать их вручную.
 	// В Numbers/Excel авто-подбор высоты для rich text работает по-разному,
 	// поэтому берем более "консервативную" оценку и допускаем большие значения.
-	lines := wrappedTextLines(partsToPlainText(projectParts), 42)
-	if v := wrappedTextLines(partsToPlainText(stageParts), 42); v > lines {
+	lines := wrappedTextLinesParts(projectParts, 42)
+	if v := wrappedTextLinesParts(stageParts, 42); v > lines {
 		lines = v
 	}
 	if v := wrappedTextLines(taskText, 42); v > lines {
@@ -297,37 +322,52 @@ func estimateRowHeight(projectParts, stageParts []textPart, taskText, supportTex
 	return h
 }
 
-func partsToPlainText(parts []textPart) string {
-	lines := make([]string, 0, len(parts))
-	for _, p := range parts {
-		lines = append(lines, strings.TrimSpace(p.label)+strings.TrimSpace(p.value))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func wrappedTextLines(s string, charsPerLine int) int {
-	if strings.TrimSpace(s) == "" {
-		return 0
-	}
+func wrappedTextLinesParts(parts []textPart, charsPerLine int) int {
 	if charsPerLine <= 0 {
 		charsPerLine = 52
 	}
 	total := 0
-	for _, raw := range strings.Split(s, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			total++
-			continue
-		}
-		runes := []rune(line)
-		segments := (len(runes) + charsPerLine - 1) / charsPerLine
-		if segments < 1 {
-			segments = 1
-		}
-		total += segments
+	for _, p := range parts {
+		line := strings.TrimSpace(p.label) + strings.TrimSpace(p.value)
+		total += wrappedLineSegments(line, charsPerLine)
 	}
 	if total < 1 {
 		return 1
 	}
 	return total
+}
+
+func wrappedTextLines(s string, charsPerLine int) int {
+	if charsPerLine <= 0 {
+		charsPerLine = 52
+	}
+	if strings.TrimSpace(s) == "" {
+		return 0
+	}
+	total := 0
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i < len(s) && s[i] != '\n' {
+			continue
+		}
+		line := strings.TrimSpace(s[start:i])
+		total += wrappedLineSegments(line, charsPerLine)
+		start = i + 1
+	}
+	if total < 1 {
+		return 1
+	}
+	return total
+}
+
+func wrappedLineSegments(line string, charsPerLine int) int {
+	if strings.TrimSpace(line) == "" {
+		return 1
+	}
+	runeCount := utf8.RuneCountInString(line)
+	segments := (runeCount + charsPerLine - 1) / charsPerLine
+	if segments < 1 {
+		return 1
+	}
+	return segments
 }

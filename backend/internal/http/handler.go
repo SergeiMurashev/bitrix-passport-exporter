@@ -44,18 +44,20 @@ type Handler struct {
 const projectFieldCode = "UF_CRM_PROJECT_GROUP_ID"
 
 type exportStatus struct {
-	Running         bool      `json:"running"`
-	CanCancel       bool      `json:"can_cancel"`
-	CancelRequested bool      `json:"cancel_requested"`
-	Phase           string    `json:"phase"`
-	DealsProcessed  int       `json:"deals_processed"`
-	DealsTotal      int       `json:"deals_total"`
-	TasksTotal      int       `json:"tasks_total"`
-	HasLastResult   bool      `json:"has_last_result"`
-	LastFileName    string    `json:"last_file_name,omitempty"`
-	StartedAt       time.Time `json:"started_at,omitempty"`
-	FinishedAt      time.Time `json:"finished_at,omitempty"`
-	LastError       string    `json:"last_error,omitempty"`
+	Running              bool      `json:"running"`
+	CanCancel            bool      `json:"can_cancel"`
+	CancelRequested      bool      `json:"cancel_requested"`
+	Phase                string    `json:"phase"`
+	DealsProcessed       int       `json:"deals_processed"`
+	DealsTotal           int       `json:"deals_total"`
+	TasksTotal           int       `json:"tasks_total"`
+	DealsWithSupport     int       `json:"deals_with_support"`
+	SupportMeasuresTotal int       `json:"support_measures_total"`
+	HasLastResult        bool      `json:"has_last_result"`
+	LastFileName         string    `json:"last_file_name,omitempty"`
+	StartedAt            time.Time `json:"started_at,omitempty"`
+	FinishedAt           time.Time `json:"finished_at,omitempty"`
+	LastError            string    `json:"last_error,omitempty"`
 }
 
 func New(cfg config.Config) (*Handler, error) {
@@ -421,6 +423,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.DealsProcessed = 0
 		s.DealsTotal = 0
 		s.TasksTotal = 0
+		s.DealsWithSupport = 0
+		s.SupportMeasuresTotal = 0
 		s.StartedAt = time.Now().UTC()
 		s.FinishedAt = time.Time{}
 		s.LastError = ""
@@ -485,6 +489,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			}
 			allProjects = append(allProjects, page.Rows...)
 			processed += len(page.Rows)
+			pageDealsWithSupport, pageSupportMeasures := collectSupportStats(page.Rows)
 			log.WithFields(log.Fields{
 				"phase":           "passport",
 				"deals_processed": processed,
@@ -493,6 +498,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			h.setStatus(func(s *exportStatus) {
 				s.Phase = "passport"
 				s.DealsProcessed = processed
+				s.DealsWithSupport += pageDealsWithSupport
+				s.SupportMeasuresTotal += pageSupportMeasures
 			})
 			if page.Next == 0 || page.Next <= start {
 				break
@@ -588,6 +595,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		}
 		projects = allProjects
 	} else {
+		supportDeals, supportMeasures := collectSupportStats(projects)
+		h.setStatus(func(s *exportStatus) {
+			s.DealsWithSupport = supportDeals
+			s.SupportMeasuresTotal = supportMeasures
+		})
 		var callErr error
 		tasks, stats, issues, callErr = svc.BuildTasks(ctx, projects, projectField, allowTitleFallback)
 		if callErr != nil {
@@ -605,10 +617,15 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	supportDeals, supportMeasures := collectSupportStats(projects)
+	stats.DealsWithSupport = supportDeals
+	stats.SupportMeasuresTotal = supportMeasures
 	log.WithFields(log.Fields{
 		"deals_total":            stats.DealsTotal,
 		"deals_with_project":     stats.DealsWithProject,
 		"deals_without_project":  stats.DealsWithoutProject,
+		"deals_with_support":     stats.DealsWithSupport,
+		"support_measures_total": stats.SupportMeasuresTotal,
 		"resolve_errors":         stats.DealsResolveErrors,
 		"projects_with_tasks":    stats.ProjectsWithTasks,
 		"projects_without_tasks": stats.ProjectsWithoutTasks,
@@ -648,6 +665,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.CanCancel = false
 		s.CancelRequested = false
 		s.Phase = "idle"
+		s.DealsWithSupport = stats.DealsWithSupport
+		s.SupportMeasuresTotal = stats.SupportMeasuresTotal
 		s.FinishedAt = time.Now().UTC()
 		s.LastError = ""
 	})
@@ -655,6 +674,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Export-Source", sourceLabel)
 	w.Header().Set("X-Export-Deals-Total", strconv.Itoa(stats.DealsTotal))
 	w.Header().Set("X-Export-Tasks-Total", strconv.Itoa(stats.TasksTotal))
+	w.Header().Set("X-Export-Deals-With-Support", strconv.Itoa(stats.DealsWithSupport))
+	w.Header().Set("X-Export-Support-Measures-Total", strconv.Itoa(stats.SupportMeasuresTotal))
 	w.Header().Set("X-Export-Issues-Count", strconv.Itoa(len(issues)))
 	w.Header().Set("X-Export-File-Name", filename)
 	w.Header().Set("Content-Type", contentType)
@@ -847,11 +868,38 @@ func mergeExportStats(a, b service.ExportStats) service.ExportStats {
 	a.DealsWithProject += b.DealsWithProject
 	a.DealsWithoutProject += b.DealsWithoutProject
 	a.DealsResolveErrors += b.DealsResolveErrors
+	a.DealsWithSupport += b.DealsWithSupport
+	a.SupportMeasuresTotal += b.SupportMeasuresTotal
 	a.ProjectsWithTasks += b.ProjectsWithTasks
 	a.ProjectsWithoutTasks += b.ProjectsWithoutTasks
 	a.TasksTotal += b.TasksTotal
 	a.TaskLoadErrors += b.TaskLoadErrors
 	return a
+}
+
+func collectSupportStats(projects []model.ProjectRow) (int, int) {
+	dealsWithSupport := 0
+	measuresTotal := 0
+	for _, p := range projects {
+		support := strings.TrimSpace(p.Support)
+		if support == "" {
+			continue
+		}
+		dealsWithSupport++
+		measuresTotal += countSupportItems(support)
+	}
+	return dealsWithSupport, measuresTotal
+}
+
+func countSupportItems(s string) int {
+	lines := strings.Split(s, "\n")
+	count := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
