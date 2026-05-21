@@ -224,6 +224,37 @@ button.ghost.small {
 .status.err { color: #ff8a8a; }
 .status.muted { color: #d1e3ff; }
 
+.status-card {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(13, 27, 47, 0.65);
+}
+
+.status-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.status-lines {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.status-line strong {
+  color: var(--text);
+}
+
 .progress-wrap {
   margin-top: 12px;
   padding: 10px 12px;
@@ -242,6 +273,10 @@ body.theme-light .top-user {
 }
 
 body.theme-light .progress-wrap {
+  background: rgba(233, 242, 255, 0.92);
+}
+
+body.theme-light .status-card {
   background: rgba(233, 242, 255, 0.92);
 }
 

@@ -91,8 +91,11 @@ root.innerHTML = `
           <div id="progress-bar" class="progress-bar"></div>
         </div>
       </div>
-
-      <p id="status" class="status"></p>
+      <section id="status-card" class="status-card hidden" aria-live="polite">
+        <h3 class="status-title">Статус выгрузки</h3>
+        <p id="status" class="status muted"></p>
+        <div id="status-lines" class="status-lines hidden"></div>
+      </section>
     </main>
   </div>
 `
@@ -118,6 +121,8 @@ const themeToggleBtn = document.getElementById('theme-toggle') as HTMLButtonElem
 const progressWrap = document.getElementById('progress-wrap') as HTMLDivElement
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement
 const progressPhase = document.getElementById('progress-phase') as HTMLSpanElement
+const statusCard = document.getElementById('status-card') as HTMLElement
+const statusLinesEl = document.getElementById('status-lines') as HTMLDivElement
 
 let mode: Mode = 'all'
 let exportFormat: ExportFormat = 'xlsx'
@@ -190,6 +195,19 @@ function getFilenameFromDisposition(contentDisposition: string | null): string |
 function setStatus(text: string, kind: 'ok' | 'err' | 'muted' = 'muted') {
   statusEl.textContent = text
   statusEl.className = `status ${kind}`
+  statusCard.classList.toggle('hidden', text.trim() === '')
+}
+
+function setStatusLines(lines: Array<{ label: string; value: string | number }>) {
+  if (!lines.length) {
+    statusLinesEl.classList.add('hidden')
+    statusLinesEl.innerHTML = ''
+    return
+  }
+  statusLinesEl.classList.remove('hidden')
+  statusLinesEl.innerHTML = lines
+    .map((line) => `<div class="status-line"><span>${line.label}</span><strong>${line.value}</strong></div>`)
+    .join('')
 }
 
 function setProgress(visible: boolean, phaseText = 'Подготовка…') {
@@ -208,6 +226,17 @@ function detectPhase(data: ExportStatus): string {
     return 'Сбор задач и сборка файла'
   }
   return 'Подготовка экспорта'
+}
+
+function humanizePhaseCode(phase: string): string {
+  const value = (phase || '').toLowerCase()
+  if (value === 'passport') return 'Сбор данных сделок'
+  if (value === 'tasks') return 'Сбор задач'
+  if (value === 'idle') return 'Ожидание'
+  if (value === 'canceled') return 'Отменено'
+  if (value === 'error') return 'Ошибка'
+  if (value === 'completed') return 'Завершено'
+  return value || 'Подготовка'
 }
 
 async function checkAuth(): Promise<boolean> {
@@ -404,9 +433,18 @@ form.addEventListener('submit', async (e) => {
       `сделок с мерами: ${res.headers.get('x-export-deals-with-support') || '-'}, мер поддержки: ${res.headers.get('x-export-support-measures-total') || '-'}.`,
       'ok',
     )
+    setStatusLines([
+      { label: 'Режим', value: mode === 'all' ? 'Все сделки' : mode === 'ids' ? 'По ID' : 'Из файла' },
+      { label: 'Формат', value: exportFormat.toUpperCase() },
+      { label: 'Сделок', value: res.headers.get('x-export-deals-total') || '-' },
+      { label: 'Задач', value: res.headers.get('x-export-tasks-total') || '-' },
+      { label: 'Сделок с мерами', value: res.headers.get('x-export-deals-with-support') || '-' },
+      { label: 'Мер поддержки', value: res.headers.get('x-export-support-measures-total') || '-' },
+    ])
     setProgress(false)
   } catch (error) {
     setStatus(humanizeError((error as Error).message || ''), 'err')
+    setStatusLines([])
     setProgress(false)
   } finally {
     submitBtn.disabled = false
@@ -480,15 +518,27 @@ async function refreshExportStatus() {
       const supportDeals = data.deals_with_support ?? 0
       const supportMeasures = data.support_measures_total ?? 0
       setStatus(
-        `Выполняется выгрузка: фаза ${data.phase}, сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}, ` +
+        `Выполняется выгрузка: сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}, ` +
         `сделок с мерами ${supportDeals}, мер поддержки ${supportMeasures}.`,
         'muted',
       )
+      setStatusLines([
+        { label: 'Этап', value: humanizePhaseCode(data.phase) },
+        { label: 'Сделок обработано', value: `${data.deals_processed}/${total}` },
+        { label: 'Задач', value: data.tasks_total },
+        { label: 'Сделок с мерами', value: supportDeals },
+        { label: 'Мер поддержки', value: supportMeasures },
+      ])
     } else {
       setProgress(false)
       if (lastRunning) {
         if (data.last_error) {
           setStatus(`Выгрузка завершилась с ошибкой: ${humanizeError(data.last_error)}`, 'err')
+          setStatusLines([
+            { label: 'Этап', value: humanizePhaseCode(data.phase || 'error') },
+            { label: 'Сделок', value: data.deals_total },
+            { label: 'Задач', value: data.tasks_total },
+          ])
         } else {
           const supportDeals = data.deals_with_support ?? 0
           const supportMeasures = data.support_measures_total ?? 0
@@ -497,6 +547,13 @@ async function refreshExportStatus() {
             `сделок с мерами: ${supportDeals}, мер поддержки: ${supportMeasures}. Нажмите кнопку ниже, чтобы скачать готовый файл.`,
             'ok',
           )
+          setStatusLines([
+            { label: 'Этап', value: humanizePhaseCode('completed') },
+            { label: 'Сделок', value: data.deals_total },
+            { label: 'Задач', value: data.tasks_total },
+            { label: 'Сделок с мерами', value: supportDeals },
+            { label: 'Мер поддержки', value: supportMeasures },
+          ])
         }
       }
       submitBtn.disabled = false
