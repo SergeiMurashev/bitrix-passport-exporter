@@ -269,23 +269,25 @@ type textPart struct {
 // Функция по оценки высоты строк
 func estimateRowHeight(projectParts, stageParts []textPart, taskText, supportText string) float64 {
 	// Приблизительно округляю строки по ширине столбца, чтобы пользователям не приходилось растягивать их вручную.
-	lines := wrappedTextLines(partsToPlainText(projectParts), 52)
-	if v := wrappedTextLines(partsToPlainText(stageParts), 52); v > lines {
+	// В Numbers/Excel авто-подбор высоты для rich text работает по-разному,
+	// поэтому берем более "консервативную" оценку и допускаем большие значения.
+	lines := wrappedTextLines(partsToPlainText(projectParts), 42)
+	if v := wrappedTextLines(partsToPlainText(stageParts), 42); v > lines {
 		lines = v
 	}
-	if v := wrappedTextLines(taskText, 52); v > lines {
+	if v := wrappedTextLines(taskText, 42); v > lines {
 		lines = v
 	}
-	if v := wrappedTextLines(supportText, 42); v > lines {
+	if v := wrappedTextLines(supportText, 34); v > lines {
 		lines = v
 	}
 	if lines < 3 {
 		lines = 3
 	}
-	if lines > 80 {
-		lines = 80
+	if lines > 240 {
+		lines = 240
 	}
-	return float64(lines)*13 + 8
+	return float64(lines)*14 + 10
 }
 
 func partsToPlainText(parts []textPart) string {

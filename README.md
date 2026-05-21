@@ -60,4 +60,4 @@ docker compose up -d --build
 - `GET /healthz`
 - `GET /api/deals/ids`
 - `GET /api/deals/fields`
-- `POST /api/export`
+- `POST /api/export` (`format=xlsx|docx`, default `xlsx`)

@@ -1,6 +1,7 @@
 import './styles.css'
 
 type Mode = 'all' | 'ids' | 'file'
+type ExportFormat = 'xlsx' | 'docx'
 type ExportStatus = {
   running: boolean
   can_cancel?: boolean
@@ -19,7 +20,7 @@ root.innerHTML = `
   <div class="page">
     <main class="card">
       <h1>Выгрузка паспорта проекта</h1>
-      <p class="subtitle">Выберите один режим и сформируйте XLSX.</p>
+      <p class="subtitle">Выберите режим и формат документа, затем скачайте готовый файл.</p>
 
       <form id="export-form">
         <label class="mode"><input type="radio" name="mode" value="all" checked /> Все сделки из Bitrix24</label>
@@ -36,8 +37,16 @@ root.innerHTML = `
           <input id="file" type="file" accept=".xls,.xlsx,.html" />
         </div>
 
+        <div class="format-row">
+          <label for="export-format">Формат документа</label>
+          <select id="export-format">
+            <option value="xlsx" selected>Документ в формате Excel (.xlsx)</option>
+            <option value="docx">Документ в формате Word (.docx)</option>
+          </select>
+        </div>
+
         <div class="actions">
-          <button id="submit" type="submit">Сформировать XLSX</button>
+          <button id="submit" type="submit">Скачать документ в формате Excel</button>
           <button id="cancel-export" class="danger hidden" type="button">Отменить выгрузку</button>
         </div>
         <button id="download-last" class="hidden" type="button">Скачать готовый файл</button>
@@ -62,6 +71,7 @@ const fileWrap = document.getElementById('file-wrap') as HTMLDivElement
 const statusEl = document.getElementById('status') as HTMLParagraphElement
 const dealIdsEl = document.getElementById('deal-ids') as HTMLInputElement
 const fileEl = document.getElementById('file') as HTMLInputElement
+const exportFormatEl = document.getElementById('export-format') as HTMLSelectElement
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
 const cancelExportBtn = document.getElementById('cancel-export') as HTMLButtonElement
 const downloadLastBtn = document.getElementById('download-last') as HTMLButtonElement
@@ -70,12 +80,36 @@ const progressBar = document.getElementById('progress-bar') as HTMLDivElement
 const progressPhase = document.getElementById('progress-phase') as HTMLSpanElement
 
 let mode: Mode = 'all'
+let exportFormat: ExportFormat = 'xlsx'
 let lastRunning = false
 
 function setMode(next: Mode) {
   mode = next
   idsWrap.classList.toggle('hidden', mode !== 'ids')
   fileWrap.classList.toggle('hidden', mode !== 'file')
+}
+
+function updateSubmitCaption() {
+  if (exportFormat === 'docx') {
+    submitBtn.textContent = 'Скачать документ в формате Word'
+    return
+  }
+  submitBtn.textContent = 'Скачать документ в формате Excel'
+}
+
+function getFilenameFromDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim())
+    } catch (_err) {
+      // ignore
+    }
+  }
+  const plainMatch = contentDisposition.match(/filename="([^"]+)"/i)
+  if (plainMatch?.[1]) return plainMatch[1].trim()
+  return null
 }
 
 function setStatus(text: string, kind: 'ok' | 'err' | 'muted' = 'muted') {
@@ -151,8 +185,8 @@ function humanizeError(message: string): string {
       userText: 'Не удалось прочитать файл. Проверьте формат (xls/xlsx/html) и попробуйте снова.',
     },
     {
-      test: (t) => t.includes('failed to build xlsx'),
-      userText: 'Не удалось сформировать итоговый Excel-файл. Повторите попытку.',
+      test: (t) => t.includes('failed to build export file') || t.includes('failed to build xlsx'),
+      userText: 'Не удалось сформировать итоговый документ. Повторите попытку.',
     },
     {
       test: (t) => t.includes('method not allowed'),
@@ -179,11 +213,17 @@ function humanizeError(message: string): string {
 }
 
 form.addEventListener('change', (e) => {
-  const target = e.target as HTMLInputElement
+  const target = e.target as HTMLInputElement | HTMLSelectElement
   if (target.name === 'mode') {
     setMode(target.value as Mode)
     if (!lastRunning) {
       setStatus('', 'muted')
+    }
+  }
+  if (target.id === 'export-format') {
+    exportFormat = (target.value === 'docx' ? 'docx' : 'xlsx')
+    if (!lastRunning) {
+      updateSubmitCaption()
     }
   }
 })
@@ -196,18 +236,19 @@ form.addEventListener('submit', async (e) => {
   cancelExportBtn.disabled = false
   cancelExportBtn.textContent = 'Отменить выгрузку'
   setProgress(true, 'Подготовка экспорта')
-  setStatus('Формируем файл. Для полной выгрузки потребуется некоторое время.', 'muted')
+  setStatus(`Формируем документ (${exportFormat === 'docx' ? 'Word' : 'Excel'}). Для полной выгрузки потребуется некоторое время.`, 'muted')
 
   try {
     const body = new FormData()
     if (mode === 'ids') body.set('deal_ids', dealIdsEl.value.trim())
     if (mode === 'file' && fileEl.files?.[0]) body.set('file', fileEl.files[0])
+    body.set('format', exportFormat)
 
     const res = await fetch('/api/export', { method: 'POST', body })
     if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
 
     const blob = await res.blob()
-    const fileName = res.headers.get('x-export-file-name') || 'passport_and_tasks.xlsx'
+    const fileName = res.headers.get('x-export-file-name') || `passport_and_tasks.${exportFormat}`
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -224,7 +265,7 @@ form.addEventListener('submit', async (e) => {
     setProgress(false)
   } finally {
     submitBtn.disabled = false
-    submitBtn.textContent = 'Сформировать XLSX'
+    updateSubmitCaption()
     cancelExportBtn.classList.add('hidden')
     cancelExportBtn.disabled = false
   }
@@ -251,7 +292,8 @@ downloadLastBtn.addEventListener('click', () => {
       const res = await fetch('/api/export/download-last')
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
       const blob = await res.blob()
-      const fileName = 'bitrix_last_export_passport_and_tasks.xlsx'
+      const fileName = getFilenameFromDisposition(res.headers.get('content-disposition'))
+        || 'bitrix_last_export_passport_and_tasks.xlsx'
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -296,7 +338,7 @@ async function refreshExportStatus() {
         }
       }
       submitBtn.disabled = false
-      submitBtn.textContent = 'Сформировать XLSX'
+      updateSubmitCaption()
       cancelExportBtn.classList.add('hidden')
       cancelExportBtn.disabled = false
       cancelExportBtn.textContent = 'Отменить выгрузку'
@@ -346,3 +388,4 @@ document.addEventListener('visibilitychange', () => {
 
 startStatusPolling()
 void refreshExportStatus()
+updateSubmitCaption()

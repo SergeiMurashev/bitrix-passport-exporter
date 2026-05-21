@@ -35,6 +35,7 @@ type Handler struct {
 	status                exportStatus
 	lastResultPath        string
 	lastFilename          string
+	lastContentType       string
 	lastUpdatedAt         time.Time
 }
 
@@ -172,8 +173,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
-	if strings.Contains(contentType, "multipart/form-data") {
+	reqContentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if strings.Contains(reqContentType, "multipart/form-data") {
 		if err := r.ParseMultipartForm(64 << 20); err != nil {
 			http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
 			return
@@ -200,6 +201,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	bClient.ConfigureSupportMapping(h.cfg.SupportLinkDealField, h.cfg.SupportMeasureValueField)
 
 	dealIDs, err := parseDealIDs(r.FormValue("deal_ids"), r.FormValue("deal_id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	exportFormat, err := parseExportFormat(r.FormValue("format"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -438,10 +444,21 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		log.WithField("issue", issue).Warn("export issue")
 	}
 
-	result, err := export.BuildResultXLSX(projects, tasks)
+	var (
+		result      []byte
+		contentType string
+	)
+	switch exportFormat {
+	case "docx":
+		result, err = export.BuildResultDOCX(projects, tasks)
+		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	default:
+		result, err = export.BuildResultXLSX(projects, tasks)
+		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	}
 	if err != nil {
-		h.markStatusError("failed to build xlsx: " + err.Error())
-		http.Error(w, "failed to build xlsx: "+err.Error(), http.StatusInternalServerError)
+		h.markStatusError("failed to build export file: " + err.Error())
+		http.Error(w, "failed to build export file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Unlock before writing response, so long file transfer does not block next run.
@@ -449,8 +466,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		h.finishFullExport()
 		fullExportLocked = false
 	}
-	filename := buildDownloadFilename(sourceLabel, dealIDs)
-	h.storeLastResult(result, filename)
+	filename := buildDownloadFilename(sourceLabel, dealIDs, exportFormat)
+	h.storeLastResult(result, filename, contentType)
 	h.setStatus(func(s *exportStatus) {
 		s.Running = false
 		s.CanCancel = false
@@ -465,7 +482,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Export-Tasks-Total", strconv.Itoa(stats.TasksTotal))
 	w.Header().Set("X-Export-Issues-Count", strconv.Itoa(len(issues)))
 	w.Header().Set("X-Export-File-Name", filename)
-	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	if _, writeErr := w.Write(result); writeErr != nil {
@@ -509,7 +526,7 @@ func (h *Handler) setStatus(update func(*exportStatus)) {
 	update(&h.status)
 }
 
-func (h *Handler) storeLastResult(data []byte, filename string) {
+func (h *Handler) storeLastResult(data []byte, filename, contentType string) {
 	if len(data) == 0 {
 		return
 	}
@@ -529,6 +546,7 @@ func (h *Handler) storeLastResult(data []byte, filename string) {
 	defer h.mu.Unlock()
 	h.lastResultPath = tmpPath
 	h.lastFilename = filename
+	h.lastContentType = strings.TrimSpace(contentType)
 	h.lastUpdatedAt = time.Now().UTC()
 	h.status.HasLastResult = true
 	h.status.LastFileName = filename
@@ -619,6 +637,7 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	path := strings.TrimSpace(h.lastResultPath)
 	filename := h.lastFilename
+	contentType := strings.TrimSpace(h.lastContentType)
 	h.mu.Unlock()
 	if path == "" {
 		http.Error(w, "no ready export file", http.StatusNotFound)
@@ -627,13 +646,20 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(filename) == "" {
 		filename = "bitrix_last_export_passport_and_tasks.xlsx"
 	}
+	if contentType == "" {
+		if strings.HasSuffix(strings.ToLower(strings.TrimSpace(filename)), ".docx") {
+			contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+		} else {
+			contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		}
+	}
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		http.Error(w, "no ready export file", http.StatusNotFound)
 		return
 	}
 	defer f.Close()
-	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
@@ -784,10 +810,11 @@ func parseDealIDs(dealIDsRaw, dealIDRaw string) ([]int, error) {
 	return out, nil
 }
 
-func buildDownloadFilename(src string, dealIDs []int) string {
+func buildDownloadFilename(src string, dealIDs []int, format string) string {
 	base := strings.TrimSpace(src)
 	base = strings.TrimSuffix(base, ".xlsx")
 	base = strings.TrimSuffix(base, ".xls")
+	base = strings.TrimSuffix(base, ".docx")
 	base = strings.TrimSuffix(base, ".html")
 	base = sanitizeASCII(base)
 	if base == "" {
@@ -802,7 +829,22 @@ func buildDownloadFilename(src string, dealIDs []int) string {
 	if len(dealIDs) > 1 {
 		base = fmt.Sprintf("deals_%d", len(dealIDs))
 	}
-	return base + "_passport_and_tasks.xlsx"
+	ext := ".xlsx"
+	if strings.EqualFold(strings.TrimSpace(format), "docx") {
+		ext = ".docx"
+	}
+	return base + "_passport_and_tasks" + ext
+}
+
+func parseExportFormat(raw string) (string, error) {
+	f := strings.ToLower(strings.TrimSpace(raw))
+	if f == "" || f == "xlsx" {
+		return "xlsx", nil
+	}
+	if f == "docx" {
+		return "docx", nil
+	}
+	return "", fmt.Errorf("unsupported export format %q, expected xlsx or docx", raw)
 }
 
 func sanitizeASCII(s string) string {
