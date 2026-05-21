@@ -238,6 +238,7 @@ func splitLines(text string) []string {
 }
 
 func xmlEscape(s string) string {
+	s = stripInvalidXMLChars(s)
 	repl := strings.NewReplacer(
 		"&", "&amp;",
 		"<", "&lt;",
@@ -246,6 +247,37 @@ func xmlEscape(s string) string {
 		"'", "&apos;",
 	)
 	return repl.Replace(s)
+}
+
+func stripInvalidXMLChars(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if isValidXMLRune(r) {
+			b.WriteRune(r)
+			continue
+		}
+		// Сохраняем читабельность текста, подменяя мусорный символ пробелом.
+		b.WriteRune(' ')
+	}
+	return b.String()
+}
+
+func isValidXMLRune(r rune) bool {
+	switch r {
+	case 0x9, 0xA, 0xD:
+		return true
+	}
+	if r >= 0x20 && r <= 0xD7FF {
+		return true
+	}
+	if r >= 0xE000 && r <= 0xFFFD {
+		return true
+	}
+	return r >= 0x10000 && r <= 0x10FFFF
 }
 
 func contentTypesXML() string {

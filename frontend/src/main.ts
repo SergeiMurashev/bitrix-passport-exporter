@@ -2,6 +2,7 @@ import './styles.css'
 
 type Mode = 'all' | 'ids' | 'file'
 type ExportFormat = 'xlsx' | 'docx'
+type ThemeMode = 'dark' | 'light'
 type ExportStatus = {
   running: boolean
   can_cancel?: boolean
@@ -19,7 +20,10 @@ const root = document.getElementById('root') as HTMLDivElement
 root.innerHTML = `
   <div class="page">
     <main class="card">
-      <h1>Выгрузка паспорта проекта</h1>
+      <div class="card-head">
+        <h1>Выгрузка паспорта проекта</h1>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Переключить тему">☾</button>
+      </div>
       <p class="subtitle">Выберите режим и формат документа, затем скачайте готовый файл.</p>
 
       <form id="export-form">
@@ -75,6 +79,7 @@ const exportFormatEl = document.getElementById('export-format') as HTMLSelectEle
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
 const cancelExportBtn = document.getElementById('cancel-export') as HTMLButtonElement
 const downloadLastBtn = document.getElementById('download-last') as HTMLButtonElement
+const themeToggleBtn = document.getElementById('theme-toggle') as HTMLButtonElement
 const progressWrap = document.getElementById('progress-wrap') as HTMLDivElement
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement
 const progressPhase = document.getElementById('progress-phase') as HTMLSpanElement
@@ -82,6 +87,7 @@ const progressPhase = document.getElementById('progress-phase') as HTMLSpanEleme
 let mode: Mode = 'all'
 let exportFormat: ExportFormat = 'xlsx'
 let lastRunning = false
+let themeMode: ThemeMode = 'dark'
 
 function setMode(next: Mode) {
   mode = next
@@ -95,6 +101,21 @@ function updateSubmitCaption() {
     return
   }
   submitBtn.textContent = 'Скачать документ в формате Excel'
+}
+
+function loadThemePreference(): ThemeMode {
+  const saved = window.localStorage.getItem('bp_theme_mode')
+  if (saved === 'light' || saved === 'dark') return saved
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
+function applyTheme(next: ThemeMode) {
+  themeMode = next
+  document.body.classList.toggle('theme-light', next === 'light')
+  document.body.classList.toggle('theme-dark', next === 'dark')
+  themeToggleBtn.textContent = next === 'light' ? '☀' : '☾'
+  themeToggleBtn.setAttribute('aria-label', next === 'light' ? 'Включить тёмную тему' : 'Включить светлую тему')
+  window.localStorage.setItem('bp_theme_mode', next)
 }
 
 function getFilenameFromDisposition(contentDisposition: string | null): string | null {
@@ -226,6 +247,10 @@ form.addEventListener('change', (e) => {
       updateSubmitCaption()
     }
   }
+})
+
+themeToggleBtn.addEventListener('click', () => {
+  applyTheme(themeMode === 'dark' ? 'light' : 'dark')
 })
 
 form.addEventListener('submit', async (e) => {
@@ -389,3 +414,4 @@ document.addEventListener('visibilitychange', () => {
 startStatusPolling()
 void refreshExportStatus()
 updateSubmitCaption()
+applyTheme(loadThemePreference())

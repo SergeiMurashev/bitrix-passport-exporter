@@ -9,6 +9,17 @@
   --primary-2: #2f6feb;
 }
 
+body.theme-light {
+  --bg-1: #edf4ff;
+  --bg-2: #dce9ff;
+  --card: rgba(255, 255, 255, 0.94);
+  --line: #b4cae8;
+  --text: #0e2038;
+  --muted: #587190;
+  --primary: #1778ff;
+  --primary-2: #0f57c8;
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -39,9 +50,33 @@ body {
   backdrop-filter: blur(4px);
 }
 
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 h1 {
   margin: 0 0 6px;
   font-size: 30px;
+}
+
+.theme-toggle {
+  margin-top: 0;
+  min-width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .subtitle {
@@ -70,6 +105,14 @@ input[type="text"], input[type="file"] {
   border-radius: 9px;
   background: rgba(11, 24, 41, 0.9);
   color: var(--text);
+}
+
+body.theme-light input[type="text"],
+body.theme-light input[type="file"],
+body.theme-light select {
+  background: #f7fbff;
+  border-color: #9fb8d7;
+  color: #0e2038;
 }
 
 select {
@@ -120,6 +163,23 @@ button.danger {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: rgba(13, 27, 47, 0.65);
+}
+
+body.theme-light .mode {
+  background: rgba(223, 235, 252, 0.75);
+}
+
+body.theme-light .progress-wrap {
+  background: rgba(233, 242, 255, 0.92);
+}
+
+body.theme-light .progress-track {
+  background: rgba(18, 62, 114, 0.14);
+}
+
+body.theme-light .status.muted {
+  color: #355a84;
+  font-weight: 500;
 }
 
 .progress-head {
