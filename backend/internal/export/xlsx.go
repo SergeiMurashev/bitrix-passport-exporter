@@ -38,6 +38,7 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 
 	row := 2
 	num := 1
+	sectionRows := make(map[int]struct{}, len(sections))
 	for _, sec := range sections {
 		if len(sec.projects) == 0 {
 			continue
@@ -45,6 +46,7 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), sec.name)
 		_ = f.MergeCell(sheet, fmt.Sprintf("B%d", row), fmt.Sprintf("E%d", row))
+		sectionRows[row] = struct{}{}
 		row++
 
 		for _, p := range sec.projects {
@@ -72,7 +74,7 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 		}
 	}
 
-	if err := styleRegistrySheet(f, sheet, row-1); err != nil {
+	if err := styleRegistrySheet(f, sheet, row-1, sectionRows); err != nil {
 		return nil, err
 	}
 
@@ -180,7 +182,7 @@ func buildTasksByDeal(tasks []model.TaskRow) map[int]string {
 	return out
 }
 
-func styleRegistrySheet(f *excelize.File, sheet string, lastRow int) error {
+func styleRegistrySheet(f *excelize.File, sheet string, lastRow int, sectionRows map[int]struct{}) error {
 	headerStyle, err := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true},
 		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
@@ -221,14 +223,11 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int) error {
 		_ = f.SetCellStyle(sheet, "A2", fmt.Sprintf("A%d", lastRow), centerStyle)
 
 		for r := 2; r <= lastRow; r++ {
-			bVal, _ := f.GetCellValue(sheet, fmt.Sprintf("B%d", r))
-			cVal, _ := f.GetCellValue(sheet, fmt.Sprintf("C%d", r))
-			dVal, _ := f.GetCellValue(sheet, fmt.Sprintf("D%d", r))
-			eVal, _ := f.GetCellValue(sheet, fmt.Sprintf("E%d", r))
-			if strings.TrimSpace(bVal) != "" && strings.TrimSpace(cVal) == "" && strings.TrimSpace(dVal) == "" && strings.TrimSpace(eVal) == "" {
-				_ = f.SetCellStyle(sheet, fmt.Sprintf("B%d", r), fmt.Sprintf("E%d", r), sectionStyle)
-				_ = f.SetRowHeight(sheet, r, 22)
+			if _, ok := sectionRows[r]; !ok {
+				continue
 			}
+			_ = f.SetCellStyle(sheet, fmt.Sprintf("B%d", r), fmt.Sprintf("E%d", r), sectionStyle)
+			_ = f.SetRowHeight(sheet, r, 22)
 		}
 	}
 	_ = f.SetPanes(sheet, &excelize.Panes{Freeze: true, Split: false, XSplit: 0, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})

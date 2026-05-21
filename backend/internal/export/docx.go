@@ -55,11 +55,14 @@ func writeDocxPart(zw *zip.Writer, name, body string) error {
 
 func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string {
 	headers := []string{"№ п/п", "Инвестиционный проект", "Стадия", "Задача проекта", "Меры поддержки по проекту"}
+	// Ширины в twips под A4 landscape с полями 720 twips:
+	// полезная ширина = 16840 - 720 - 720 = 15400
+	widths := []int{700, 4000, 4000, 3800, 2900}
 	tasksByDeal := buildTasksByDeal(tasks)
 	sections := groupBySection(projects)
 
 	var body strings.Builder
-	body.WriteString(`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>`)
+	body.WriteString(`<w:tbl><w:tblPr><w:tblW w:w="15400" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar><w:tblBorders>`)
 	body.WriteString(`<w:top w:val="single" w:sz="6" w:space="0" w:color="000000"/>`)
 	body.WriteString(`<w:left w:val="single" w:sz="6" w:space="0" w:color="000000"/>`)
 	body.WriteString(`<w:bottom w:val="single" w:sz="6" w:space="0" w:color="000000"/>`)
@@ -67,7 +70,7 @@ func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string
 	body.WriteString(`<w:insideH w:val="single" w:sz="6" w:space="0" w:color="000000"/>`)
 	body.WriteString(`<w:insideV w:val="single" w:sz="6" w:space="0" w:color="000000"/>`)
 	body.WriteString(`</w:tblBorders></w:tblPr>`)
-	body.WriteString(`<w:tblGrid><w:gridCol w:w="900"/><w:gridCol w:w="5300"/><w:gridCol w:w="5300"/><w:gridCol w:w="5000"/><w:gridCol w:w="3800"/></w:tblGrid>`)
+	body.WriteString(`<w:tblGrid><w:gridCol w:w="700"/><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/><w:gridCol w:w="3800"/><w:gridCol w:w="2900"/></w:tblGrid>`)
 
 	headerCells := make([]docxCell, 0, len(headers))
 	for _, h := range headers {
@@ -76,7 +79,7 @@ func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string
 			center: true,
 		})
 	}
-	body.WriteString(docxRowXML(headerCells))
+	body.WriteString(docxRowXML(headerCells, widths))
 
 	num := 1
 	for _, sec := range sections {
@@ -86,7 +89,7 @@ func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string
 		body.WriteString(docxRowXML([]docxCell{
 			{paras: []docxPara{{text: "", center: true}}},
 			{paras: []docxPara{{text: sec.name, bold: true, center: true}}, gridSpan: 4, center: true},
-		}))
+		}, widths))
 
 		for _, p := range sec.projects {
 			projectParas := []docxPara{
@@ -124,7 +127,7 @@ func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string
 				{paras: stageParas},
 				{paras: taskParas},
 				{paras: supportParas},
-			}))
+			}, widths))
 			num++
 		}
 	}
@@ -152,11 +155,24 @@ func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string
 		`<w:body>` + body.String() + `</w:body></w:document>`
 }
 
-func docxRowXML(cells []docxCell) string {
+func docxRowXML(cells []docxCell, widths []int) string {
 	var b strings.Builder
 	b.WriteString(`<w:tr>`)
+	col := 0
 	for _, c := range cells {
+		span := c.gridSpan
+		if span < 1 {
+			span = 1
+		}
+		tcW := 0
+		for i := 0; i < span && col+i < len(widths); i++ {
+			tcW += widths[col+i]
+		}
+		col += span
 		b.WriteString(`<w:tc><w:tcPr>`)
+		if tcW > 0 {
+			b.WriteString(fmt.Sprintf(`<w:tcW w:w="%d" w:type="dxa"/>`, tcW))
+		}
 		if c.gridSpan > 1 {
 			b.WriteString(fmt.Sprintf(`<w:gridSpan w:val="%d"/>`, c.gridSpan))
 		}
@@ -177,12 +193,19 @@ func docxRowXML(cells []docxCell) string {
 func docxParaXML(text string, bold bool, center bool) string {
 	var b strings.Builder
 	b.WriteString(`<w:p>`)
+	b.WriteString(`<w:pPr>`)
+	b.WriteString(`<w:spacing w:before="0" w:after="0" w:line="220" w:lineRule="auto"/>`)
 	if center {
-		b.WriteString(`<w:pPr><w:jc w:val="center"/></w:pPr>`)
+		b.WriteString(`<w:jc w:val="center"/>`)
+	} else {
+		b.WriteString(`<w:jc w:val="left"/>`)
 	}
+	b.WriteString(`</w:pPr>`)
 	b.WriteString(`<w:r>`)
 	if bold {
-		b.WriteString(`<w:rPr><w:b/></w:rPr>`)
+		b.WriteString(`<w:rPr><w:b/><w:sz w:val="20"/><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/></w:rPr>`)
+	} else {
+		b.WriteString(`<w:rPr><w:sz w:val="20"/><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/></w:rPr>`)
 	}
 	if text == "" {
 		b.WriteString(`<w:t/>`)
