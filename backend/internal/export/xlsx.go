@@ -68,7 +68,11 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 			addLabeledRichText(f, sheet, fmt.Sprintf("C%d", row), stageParts)
 			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), taskText)
 			f.SetCellValue(sheet, fmt.Sprintf("E%d", row), strings.TrimSpace(p.Support))
-			_ = f.SetRowHeight(sheet, row, estimateRowHeight(projectParts, stageParts, taskText, strings.TrimSpace(p.Support)))
+			h := estimateRowHeight(projectParts, stageParts, taskText, strings.TrimSpace(p.Support))
+			if err := f.SetRowHeight(sheet, row, h); err != nil {
+				// Защита от ограничений Excel/Numbers по высоте строки.
+				_ = f.SetRowHeight(sheet, row, 409)
+			}
 			num++
 			row++
 		}
@@ -283,10 +287,14 @@ func estimateRowHeight(projectParts, stageParts []textPart, taskText, supportTex
 	if lines < 3 {
 		lines = 3
 	}
-	if lines > 240 {
-		lines = 240
+	if lines > 30 {
+		lines = 30
 	}
-	return float64(lines)*14 + 10
+	h := float64(lines)*13 + 8
+	if h > 409 {
+		return 409
+	}
+	return h
 }
 
 func partsToPlainText(parts []textPart) string {

@@ -266,6 +266,7 @@ func stripInvalidXMLChars(s string) string {
 	return b.String()
 }
 
+// руна на поиск "сломанного" XML символа
 func isValidXMLRune(r rune) bool {
 	switch r {
 	case 0x9, 0xA, 0xD:
