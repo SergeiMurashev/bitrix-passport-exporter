@@ -34,14 +34,27 @@ func Load() Config {
 }
 
 func loadDotEnvIfPresent() {
-	path := ".env"
-	if _, err := os.Stat(path); err != nil {
+	// Поддержка общих каталогов запуска:
+	// - корень проекта: ".env"
+	// - внутренний каталог: "../.env"
+	// - вложенные пути (резервный вариант): "../../.env"
+	candidates := []string{".env", "../.env", "../../.env"}
+	for _, path := range candidates {
+		if !loadDotEnvFile(path) {
+			continue
+		}
 		return
+	}
+}
+
+func loadDotEnvFile(path string) bool {
+	if _, err := os.Stat(path); err != nil {
+		return false
 	}
 
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return
+		return false
 	}
 	defer f.Close()
 
@@ -65,6 +78,8 @@ func loadDotEnvIfPresent() {
 			_ = os.Setenv(k, v)
 		}
 	}
+
+	return true
 }
 
 func env(key, fallback string) string {
