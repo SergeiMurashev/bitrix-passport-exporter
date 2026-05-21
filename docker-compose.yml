@@ -1,11 +1,29 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bitrix-passport-exporter-postgres
+    environment:
+      POSTGRES_DB: ${AUTH_DB_NAME}
+      POSTGRES_USER: ${AUTH_DB_USER}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD}
+    ports:
+      - "5436:5432"
+    volumes:
+      - bitrix-passport-exporter-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   bitrix-passport-exporter:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: bitrix-passport-exporter
+    depends_on:
+      - postgres
     env_file:
       - .env
     ports:
       - "25504:25504"
     restart: unless-stopped
+
+volumes:
+  bitrix-passport-exporter-pgdata:

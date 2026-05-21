@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/export"
@@ -28,6 +29,7 @@ import (
 
 type Handler struct {
 	cfg                   config.Config
+	auth                  *auth.Manager
 	mu                    sync.Mutex
 	fullExportBusy        bool
 	fullExportCancel      context.CancelFunc
@@ -56,13 +58,31 @@ type exportStatus struct {
 	LastError       string    `json:"last_error,omitempty"`
 }
 
-func New(cfg config.Config) *Handler {
+func New(cfg config.Config) (*Handler, error) {
+	var authManager *auth.Manager
+	if cfg.AuthEnabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var err error
+		authManager, err = auth.New(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("init auth manager: %w", err)
+		}
+	}
 	return &Handler{
-		cfg: cfg,
+		cfg:  cfg,
+		auth: authManager,
 		status: exportStatus{
 			Phase: "idle",
 		},
+	}, nil
+}
+
+func (h *Handler) Close() error {
+	if h == nil || h.auth == nil {
+		return nil
 	}
+	return h.auth.Close()
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -71,10 +91,20 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	guard := h.withAccessControl
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), "assets")))))
 	logRoute("GET", "/assets/*", "http.FileServer", 0)
+	mux.Handle("/invest-agent-logo-dark.png", http.FileServer(http.Dir(frontendDistDir())))
+	logRoute("GET", "/invest-agent-logo-dark.png", "http.FileServer", 0)
+	mux.Handle("/invest-agent-logo-light.png", http.FileServer(http.Dir(frontendDistDir())))
+	logRoute("GET", "/invest-agent-logo-light.png", "http.FileServer", 0)
 	mux.Handle("/logo1.png", http.FileServer(http.Dir(frontendDistDir())))
 	logRoute("GET", "/logo1.png", "http.FileServer", 0)
 	mux.Handle("/", http.HandlerFunc(h.ui))
 	logRoute("GET", "/", "Handler.ui", 0)
+	mux.HandleFunc("/api/auth/login", h.authLogin)
+	logRoute("POST", "/api/auth/login", "Handler.authLogin", 0)
+	mux.Handle("/api/auth/me", guard(http.HandlerFunc(h.authMe)))
+	logRoute("GET", "/api/auth/me", "Handler.authMe", 0)
+	mux.Handle("/api/auth/logout", guard(http.HandlerFunc(h.authLogout)))
+	logRoute("POST", "/api/auth/logout", "Handler.authLogout", 0)
 	// Сервисные вызовы
 	mux.Handle("/api/deals/ids", guard(http.HandlerFunc(h.dealIDs)))
 	logRoute("GET", "/api/deals/ids", "Handler.dealIDs", 0)
@@ -94,7 +124,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	token := strings.TrimSpace(h.cfg.APIAccessToken)
 	useToken := token != ""
-	if !useToken {
+	useAuth := h.auth != nil
+	if !useToken && !useAuth {
 		return next
 	}
 
@@ -126,12 +157,156 @@ func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if tokenAllowed(r) {
+		if useToken && tokenAllowed(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if useAuth {
+			if _, ok := h.sessionClaimsFromRequest(r); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
 		unauthorized(w)
 	})
+}
+
+func (h *Handler) sessionClaimsFromRequest(r *http.Request) (*auth.Claims, bool) {
+	if h.auth == nil {
+		return nil, false
+	}
+	candidates := make([]string, 0, 2)
+	if c, err := r.Cookie(auth.CookieName()); err == nil {
+		candidates = append(candidates, strings.TrimSpace(c.Value))
+	}
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		candidates = append(candidates, strings.TrimSpace(authHeader[7:]))
+	}
+	for _, t := range candidates {
+		if t == "" {
+			continue
+		}
+		claims, err := h.auth.ParseToken(t)
+		if err == nil && claims != nil {
+			return claims, true
+		}
+	}
+	return nil, false
+}
+
+func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
+	ttl := int(time.Until(expiresAt).Seconds())
+	if ttl <= 0 {
+		ttl = 1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName(),
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+		MaxAge:   ttl,
+	})
+}
+
+func (h *Handler) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CookieName(),
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+		MaxAge:   -1,
+	})
+}
+
+func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.auth == nil {
+		http.Error(w, "auth is disabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	var in struct {
+		Login    string `json:"login"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	login := strings.TrimSpace(in.Login)
+	if login == "" || strings.TrimSpace(in.Password) == "" {
+		http.Error(w, "login and password are required", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.auth.Authenticate(r.Context(), login, in.Password)
+	if err != nil {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	token, expiresAt, err := h.auth.IssueToken(user)
+	if err != nil {
+		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		return
+	}
+	h.setSessionCookie(w, r, token, expiresAt)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":         true,
+		"token":      token,
+		"expires_at": expiresAt.UTC(),
+		"user":       user,
+	})
+}
+
+func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.auth == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"user": map[string]any{
+				"id":    0,
+				"login": "system",
+			},
+		})
+		return
+	}
+	claims, ok := h.sessionClaimsFromRequest(r)
+	if !ok || claims == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": true,
+		"user": map[string]any{
+			"id":    claims.UserID,
+			"login": claims.Login,
+		},
+		"expires_at": claims.ExpiresAt.Time.UTC(),
+	})
+}
+
+func (h *Handler) authLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.clearSessionCookie(w, r)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {

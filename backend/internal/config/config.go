@@ -17,6 +17,14 @@ type Config struct {
 	SupportLinkDealField     string
 	SupportMeasureValueField string
 	APIAccessToken           string
+	AuthEnabled              bool
+	AuthDBDSN                string
+	AuthJWTSecret            string
+	AuthTokenTTLMinutes      int
+	AuthUser1Login           string
+	AuthUser1Password        string
+	AuthUser2Login           string
+	AuthUser2Password        string
 }
 
 func Load() Config {
@@ -30,6 +38,14 @@ func Load() Config {
 		SupportLinkDealField:     env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
 		SupportMeasureValueField: env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
 		APIAccessToken:           env("API_ACCESS_TOKEN", ""),
+		AuthEnabled:              envBool("AUTH_ENABLED", false),
+		AuthDBDSN:                env("AUTH_DB_DSN", ""),
+		AuthJWTSecret:            env("AUTH_JWT_SECRET", ""),
+		AuthTokenTTLMinutes:      envInt("AUTH_TOKEN_TTL_MINUTES", 720),
+		AuthUser1Login:           env("AUTH_USER_1_LOGIN", ""),
+		AuthUser1Password:        env("AUTH_USER_1_PASSWORD", ""),
+		AuthUser2Login:           env("AUTH_USER_2_LOGIN", ""),
+		AuthUser2Password:        env("AUTH_USER_2_PASSWORD", ""),
 	}
 }
 
@@ -100,4 +116,20 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func envBool(key string, fallback bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return fallback
+	}
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		fmt.Printf("invalid %s=%q; using default %t\n", key, v, fallback)
+		return fallback
+	}
 }

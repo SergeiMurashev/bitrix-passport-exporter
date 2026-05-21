@@ -17,7 +17,11 @@ func main() {
 
 	cfg := config.Load()
 	mux := http.NewServeMux()
-	h := httpapi.New(cfg)
+	h, err := httpapi.New(cfg)
+	if err != nil {
+		log.WithError(err).Fatal("failed to initialize handler")
+	}
+	defer h.Close()
 	h.Register(mux)
 
 	point, short := callerPoint(1)

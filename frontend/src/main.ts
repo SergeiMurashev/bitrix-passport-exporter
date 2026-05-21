@@ -15,6 +15,13 @@ type ExportStatus = {
   last_file_name?: string
   last_error?: string
 }
+type AuthMeResponse = {
+  ok: boolean
+  user?: {
+    id: number
+    login: string
+  }
+}
 
 const root = document.getElementById('root') as HTMLDivElement
 root.innerHTML = `
@@ -27,9 +34,23 @@ root.innerHTML = `
 
       <div class="card-head">
         <h1>Выгрузка паспорта проекта</h1>
-        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Переключить тему">☾</button>
+        <div class="top-controls">
+          <div id="top-user" class="top-user hidden">
+            <span id="top-user-login">-</span>
+            <button id="logout-btn" class="ghost small" type="button">Выйти</button>
+          </div>
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Переключить тему">☾</button>
+        </div>
       </div>
       <p class="subtitle">Выберите режим и формат документа, затем скачайте готовый файл.</p>
+
+      <form id="login-form" class="auth-panel hidden">
+        <label for="auth-login">Логин</label>
+        <input id="auth-login" type="text" autocomplete="username" />
+        <label for="auth-password">Пароль</label>
+        <input id="auth-password" type="password" autocomplete="current-password" />
+        <button id="login-btn" type="submit">Войти</button>
+      </form>
 
       <form id="export-form">
         <label class="mode"><input type="radio" name="mode" value="all" checked /> Все сделки из Bitrix24</label>
@@ -75,6 +96,13 @@ root.innerHTML = `
 `
 
 const form = document.getElementById('export-form') as HTMLFormElement
+const loginForm = document.getElementById('login-form') as HTMLFormElement
+const authLoginEl = document.getElementById('auth-login') as HTMLInputElement
+const authPasswordEl = document.getElementById('auth-password') as HTMLInputElement
+const loginBtn = document.getElementById('login-btn') as HTMLButtonElement
+const topUser = document.getElementById('top-user') as HTMLDivElement
+const topUserLoginEl = document.getElementById('top-user-login') as HTMLSpanElement
+const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement
 const idsWrap = document.getElementById('ids-wrap') as HTMLDivElement
 const fileWrap = document.getElementById('file-wrap') as HTMLDivElement
 const statusEl = document.getElementById('status') as HTMLParagraphElement
@@ -93,6 +121,25 @@ let mode: Mode = 'all'
 let exportFormat: ExportFormat = 'xlsx'
 let lastRunning = false
 let themeMode: ThemeMode = 'dark'
+let isAuthenticated = false
+let statusPollTimer: number | null = null
+
+function setAuthState(next: boolean, login = '') {
+  isAuthenticated = next
+  loginForm.classList.toggle('hidden', next)
+  topUser.classList.toggle('hidden', !next)
+  form.classList.toggle('hidden', !next)
+  progressWrap.classList.toggle('hidden', !next)
+  if (next) {
+    topUserLoginEl.textContent = login || '-'
+    return
+  }
+  topUserLoginEl.textContent = '-'
+  stopStatusPolling()
+  setProgress(false)
+}
+
+setAuthState(false)
 
 function setMode(next: Mode) {
   mode = next
@@ -160,6 +207,25 @@ function detectPhase(data: ExportStatus): string {
   }
   return 'Подготовка экспорта'
 }
+
+async function checkAuth(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/me')
+    if (!res.ok) {
+      setAuthState(false)
+      setStatus('Войдите в систему для работы с выгрузкой.', 'muted')
+      return false
+    }
+    const data = await res.json() as AuthMeResponse
+    const login = data.user?.login || ''
+    setAuthState(true, login)
+    return true
+  } catch (_err) {
+    setAuthState(false)
+    setStatus('Не удалось проверить авторизацию. Повторите попытку.', 'err')
+    return false
+  }
+}
 // Словарь уведомлений
 function humanizeError(message: string): string {
   const text = (message || '').toLowerCase().trim()
@@ -224,7 +290,7 @@ function humanizeError(message: string): string {
     },
     {
       test: (t) => t.includes('unauthorized') || t.includes('http 401'),
-      userText: 'Доступ запрещен. Перезагрузите страницу и повторите попытку.',
+      userText: 'Сессия истекла или доступ запрещен. Войдите в систему снова.',
     },
     {
       test: (t) => t.includes('http 500') || t.includes('http 502') || t.includes('http 503') || t.includes('http 504'),
@@ -256,6 +322,49 @@ form.addEventListener('change', (e) => {
 
 themeToggleBtn.addEventListener('click', () => {
   applyTheme(themeMode === 'dark' ? 'light' : 'dark')
+})
+
+loginForm.addEventListener('submit', (e) => {
+  e.preventDefault()
+  void (async () => {
+    loginBtn.disabled = true
+    loginBtn.textContent = 'Вход...'
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login: authLoginEl.value.trim(),
+          password: authPasswordEl.value,
+        }),
+      })
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
+      const ok = await checkAuth()
+      if (ok) {
+        authPasswordEl.value = ''
+        setStatus('Авторизация успешна.', 'ok')
+        startStatusPolling()
+        await refreshExportStatus()
+      }
+    } catch (error) {
+      setStatus(humanizeError((error as Error).message || ''), 'err')
+    } finally {
+      loginBtn.disabled = false
+      loginBtn.textContent = 'Войти'
+    }
+  })()
+})
+
+logoutBtn.addEventListener('click', () => {
+  void (async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch (_err) {
+      // no-op
+    }
+    setAuthState(false)
+    setStatus('Вы вышли из системы.', 'muted')
+  })()
 })
 
 form.addEventListener('submit', async (e) => {
@@ -341,6 +450,11 @@ downloadLastBtn.addEventListener('click', () => {
 async function refreshExportStatus() {
   try {
     const res = await fetch('/api/export/status')
+    if (res.status === 401) {
+      setAuthState(false)
+      setStatus('Войдите в систему для работы с выгрузкой.', 'muted')
+      return
+    }
     if (!res.ok) return
     const data = await res.json() as ExportStatus
 
@@ -389,7 +503,6 @@ async function refreshExportStatus() {
 }
 
 const statusPollIntervalMs = 7000
-let statusPollTimer: number | null = null
 
 function stopStatusPolling() {
   if (statusPollTimer !== null) {
@@ -409,14 +522,21 @@ function startStatusPolling() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    startStatusPolling()
-    void refreshExportStatus()
+    if (isAuthenticated) {
+      startStatusPolling()
+      void refreshExportStatus()
+    }
     return
   }
   stopStatusPolling()
 })
 
-startStatusPolling()
-void refreshExportStatus()
 updateSubmitCaption()
 applyTheme(loadThemePreference())
+
+void (async () => {
+  const ok = await checkAuth()
+  if (!ok) return
+  startStatusPolling()
+  await refreshExportStatus()
+})()
