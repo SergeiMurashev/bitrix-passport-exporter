@@ -216,7 +216,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		}
 		h.markStatusError(err.Error())
 		auditErrText = err.Error()
-		log.WithError(err).WithField("deal_ids", dealIDs).Error("export load projects failed")
+		log.WithError(err).Error("export load projects failed")
 		writeAPIErrorSimple(
 			w,
 			http.StatusBadRequest,
@@ -238,13 +238,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	log.WithFields(log.Fields{
-		"source":        sourceLabel,
-		"deals":         len(projects),
-		"project_field": projectField,
-		"deal_ids":      dealIDs,
-	}).Info("export request")
-
 	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
 	isFullBitrixExport := sourceLabel == "bitrix_api"
 	allowTitleFallback := true
@@ -260,7 +253,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		start := 0
 		processed := 0
 		var allProjects []model.ProjectRow
-		log.WithField("source", "bitrix_api").Info("export phase=passport started")
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
@@ -290,11 +282,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			allProjects = append(allProjects, page.Rows...)
 			processed += len(page.Rows)
 			pageDealsWithSupport, pageSupportMeasures := collectSupportStats(page.Rows)
-			log.WithFields(log.Fields{
-				"phase":           "passport",
-				"deals_processed": processed,
-				"next":            page.Next,
-			}).Info("export progress")
 			h.setStatus(func(s *exportStatus) {
 				s.Phase = "passport"
 				s.DealsProcessed = processed
@@ -306,19 +293,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			}
 			start = page.Next
 		}
-		log.WithFields(log.Fields{
-			"phase":       "passport",
-			"deals_total": len(allProjects),
-		}).Info("export phase finished")
 		h.setStatus(func(s *exportStatus) {
 			s.Phase = "tasks"
 			s.DealsTotal = len(allProjects)
 		})
 
-		log.WithFields(log.Fields{
-			"phase":       "tasks",
-			"deals_total": len(allProjects),
-		}).Info("export phase started")
 		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
 			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, projectField, allowTitleFallback)
 			if allErr != nil {
@@ -357,11 +336,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			tasks = allTasks
 			issues = allIssues
 			stats = mergeExportStats(stats, allStats)
-			log.WithFields(log.Fields{
-				"phase":           "tasks",
-				"deals_processed": len(allProjects),
-				"tasks_total":     len(tasks),
-			}).Info("export progress")
 			h.setStatus(func(s *exportStatus) {
 				s.Phase = "tasks"
 				s.DealsProcessed = len(allProjects)
@@ -411,11 +385,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				tasks = append(tasks, chunkTasks...)
 				issues = append(issues, chunkIssues...)
 				stats = mergeExportStats(stats, chunkStats)
-				log.WithFields(log.Fields{
-					"phase":           "tasks",
-					"deals_processed": end,
-					"tasks_total":     len(tasks),
-				}).Info("export progress")
 				h.setStatus(func(s *exportStatus) {
 					s.Phase = "tasks"
 					s.DealsProcessed = end
@@ -423,11 +392,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
-		log.WithFields(log.Fields{
-			"phase":       "tasks",
-			"tasks_total": len(tasks),
-		}).Info("export phase finished")
-
 		for i := range allProjects {
 			allProjects[i].Seq = i + 1
 		}
@@ -477,20 +441,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	supportDeals, supportMeasures := collectSupportStats(projects)
 	stats.DealsWithSupport = supportDeals
 	stats.SupportMeasuresTotal = supportMeasures
-	log.WithFields(log.Fields{
-		"deals_total":            stats.DealsTotal,
-		"deals_with_project":     stats.DealsWithProject,
-		"deals_without_project":  stats.DealsWithoutProject,
-		"deals_with_support":     stats.DealsWithSupport,
-		"support_measures_total": stats.SupportMeasuresTotal,
-		"resolve_errors":         stats.DealsResolveErrors,
-		"projects_with_tasks":    stats.ProjectsWithTasks,
-		"projects_without_tasks": stats.ProjectsWithoutTasks,
-		"task_load_errors":       stats.TaskLoadErrors,
-		"tasks_total":            stats.TasksTotal,
-	}).Info("export stats")
 	for _, issue := range issues {
-		log.WithField("issue", issue).Warn("export issue")
+		log.WithField("issue", issue).Debug("export issue")
 	}
 
 	var (
@@ -560,6 +512,17 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				SupportMeasuresTotal: stats.SupportMeasuresTotal,
 			},
 		}, nil)
+	log.WithFields(log.Fields{
+		"source":                 sourceLabel,
+		"format":                 exportFormat,
+		"duration_ms":            time.Since(exportStartedAt).Milliseconds(),
+		"deals_total":            stats.DealsTotal,
+		"tasks_total":            stats.TasksTotal,
+		"deals_with_support":     stats.DealsWithSupport,
+		"support_measures_total": stats.SupportMeasuresTotal,
+		"issues_count":           len(issues),
+		"file_name":              filename,
+	}).Info("export completed")
 	auditSuccess = true
 }
 

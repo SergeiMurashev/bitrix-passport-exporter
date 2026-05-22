@@ -8,7 +8,6 @@ import (
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
-	log "github.com/sirupsen/logrus"
 )
 
 type Handler struct {
@@ -74,8 +73,4 @@ func (h *Handler) Close() error {
 		return nil
 	}
 	return h.auth.Close()
-}
-
-func logRoute(method, path, handler string, middlewares int) {
-	log.Infof("[HTTP-debug] %-6s %s --> %s (%d handlers)", method, path, handler, middlewares+1)
 }
