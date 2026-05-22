@@ -1,0 +1,701 @@
+openapi: 3.1.0
+info:
+  title: Bitrix Passport Exporter API
+  version: 1.2.2
+  description: |
+    API сервиса выгрузки "Паспорта проекта" и задач из Bitrix24.
+
+    Формат ответов (JSON):
+    - `ok`: boolean
+    - `status`: строковый код статуса
+    - `message`: человекочитаемое сообщение
+    - `data`: полезные данные
+    - `error`: объект ошибки (`code`, `detail`) при `ok=false`
+    - `meta`: дополнительные поля
+servers:
+  - url: http://localhost:25504
+    description: Local
+
+tags:
+  - name: health
+  - name: auth
+  - name: deals
+  - name: export
+
+security:
+  - ApiKeyAuth: []
+  - CookieAuth: []
+  - BearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      security: []
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ready
+        "503":
+          description: Dependency is unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: not ready
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Login (sets HttpOnly cookie session)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              login: InvestClient
+              password: Agency_client_615243
+      responses:
+        "200":
+          description: Authorized
+          headers:
+            Set-Cookie:
+              description: HttpOnly cookie `bp_session`
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseAuthLoginData"
+              example:
+                ok: true
+                status: authorized
+                message: Вход выполнен
+                data:
+                  expires_at: "2026-05-29T07:00:32.546263086Z"
+                  session: cookie
+                  user:
+                    id: 2
+                    login: InvestClient
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "429":
+          description: Too many login attempts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      summary: Current session info
+      responses:
+        "200":
+          description: Session is active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseAuthMeData"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout (clears session cookie)
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseGenericData"
+
+  /api/deals/ids:
+    get:
+      tags: [deals]
+      summary: Get all deal IDs from Bitrix24
+      responses:
+        "200":
+          description: IDs loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseDealsIDsData"
+        "400":
+          description: Invalid webhook
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "502":
+          description: Bitrix load error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/deals/fields:
+    get:
+      tags: [deals]
+      summary: Get deal fields list from Bitrix24
+      responses:
+        "200":
+          description: Fields loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseDealsFieldsData"
+        "400":
+          description: Invalid webhook
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "502":
+          description: Bitrix load error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/export:
+    post:
+      tags: [export]
+      summary: Run export job and return JSON metadata for ready file
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                deal_ids:
+                  type: string
+                  description: "ID сделок через запятую (режим `ids`)"
+                  example: "28605,28606"
+                format:
+                  type: string
+                  enum: [xlsx, docx]
+                  default: xlsx
+                file:
+                  type: string
+                  format: binary
+                  description: "Файл со сделками (.xls/.xlsx/.html) для режима `file`"
+      responses:
+        "200":
+          description: Export finished and file is ready to download
+          headers:
+            X-Export-Success:
+              schema:
+                type: string
+                example: "true"
+            X-Export-Source:
+              schema:
+                type: string
+                example: bitrix_deal_28605
+            X-Export-File-Name:
+              schema:
+                type: string
+                example: deal_28605_passport_and_tasks.docx
+            X-Export-Deals-Total:
+              schema:
+                type: string
+                example: "1"
+            X-Export-Tasks-Total:
+              schema:
+                type: string
+                example: "0"
+            X-Export-Deals-With-Support:
+              schema:
+                type: string
+                example: "1"
+            X-Export-Support-Measures-Total:
+              schema:
+                type: string
+                example: "1"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseExportCompletedData"
+              example:
+                ok: true
+                status: export_completed
+                message: Выгрузка завершена, файл готов к скачиванию
+                data:
+                  file_name: deal_28605_passport_and_tasks.docx
+                  content_type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+                  size_bytes: 3597
+                  download_url: /api/export/download-last
+                  format: docx
+                  source: bitrix_deal_28605
+                  issues_count: 0
+                  stats:
+                    deals_total: 1
+                    tasks_total: 0
+                    deals_with_support: 1
+                    support_measures_total: 1
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "409":
+          description: Export canceled or conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "429":
+          description: Too many export requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "502":
+          description: Bitrix webhook/auth/backend error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/export/status:
+    get:
+      tags: [export]
+      summary: Get current export status
+      responses:
+        "200":
+          description: Status loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseExportStatusData"
+              example:
+                ok: true
+                status: export_status
+                message: Текущий статус выгрузки
+                data:
+                  running: false
+                  can_cancel: false
+                  cancel_requested: false
+                  phase: idle
+                  deals_processed: 0
+                  deals_total: 0
+                  tasks_total: 0
+                  deals_with_support: 0
+                  support_measures_total: 0
+                  has_last_result: true
+                  last_file_name: bitrix_all_deals_passport_and_tasks.xlsx
+                  started_at: "0001-01-01T00:00:00Z"
+                  finished_at: "0001-01-01T00:00:00Z"
+                meta:
+                  generated_at: "2026-05-22T06:48:01.669849169Z"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/export/cancel:
+    post:
+      tags: [export]
+      summary: Cancel running export
+      responses:
+        "202":
+          description: Cancel requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponseCancelData"
+              example:
+                ok: true
+                status: cancel_requested
+                message: Запрос на отмену выгрузки отправлен
+                data:
+                  cancel_requested: true
+        "409":
+          description: No running export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+  /api/export/download-last:
+    get:
+      tags: [export]
+      summary: Download last prepared export file
+      responses:
+        "200":
+          description: File stream
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment filename
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No ready export file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API access token (if configured)
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: bp_session
+      description: Session cookie after login
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Optional bearer token (same session token)
+
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+
+    ApiErrorResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: false
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+        error:
+          $ref: "#/components/schemas/ApiError"
+        meta:
+          type: object
+          additionalProperties: true
+
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          type: string
+        password:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        login:
+          type: string
+
+    AuthLoginData:
+      type: object
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+        session:
+          type: string
+          example: cookie
+        user:
+          $ref: "#/components/schemas/User"
+
+    AuthMeData:
+      type: object
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+        user:
+          $ref: "#/components/schemas/User"
+
+    DealIDsData:
+      type: object
+      properties:
+        count:
+          type: integer
+        deals:
+          type: array
+          items:
+            type: integer
+
+    DealField:
+      type: object
+      additionalProperties: true
+
+    DealFieldsData:
+      type: object
+      properties:
+        count:
+          type: integer
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/DealField"
+
+    ExportStats:
+      type: object
+      properties:
+        deals_total:
+          type: integer
+        tasks_total:
+          type: integer
+        deals_with_support:
+          type: integer
+        support_measures_total:
+          type: integer
+
+    ExportCompletedData:
+      type: object
+      properties:
+        file_name:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+        download_url:
+          type: string
+        format:
+          type: string
+          enum: [xlsx, docx]
+        source:
+          type: string
+        issues_count:
+          type: integer
+        stats:
+          $ref: "#/components/schemas/ExportStats"
+
+    ExportStatusData:
+      type: object
+      properties:
+        running:
+          type: boolean
+        can_cancel:
+          type: boolean
+        cancel_requested:
+          type: boolean
+        phase:
+          type: string
+        deals_processed:
+          type: integer
+        deals_total:
+          type: integer
+        tasks_total:
+          type: integer
+        deals_with_support:
+          type: integer
+        support_measures_total:
+          type: integer
+        has_last_result:
+          type: boolean
+        last_file_name:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        last_error:
+          type: string
+
+    CancelData:
+      type: object
+      properties:
+        cancel_requested:
+          type: boolean
+
+    GenericData:
+      type: object
+      additionalProperties: true
+
+    ApiResponseAuthLoginData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/AuthLoginData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseAuthMeData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/AuthMeData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseDealsIDsData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/DealIDsData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseDealsFieldsData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/DealFieldsData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseExportCompletedData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/ExportCompletedData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseExportStatusData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/ExportStatusData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseCancelData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/CancelData"
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiResponseGenericData:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          $ref: "#/components/schemas/GenericData"
+        meta:
+          type: object
+          additionalProperties: true

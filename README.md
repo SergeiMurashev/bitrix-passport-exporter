@@ -81,4 +81,21 @@ docker compose up -d --build
 - `POST /api/auth/logout`
 - `GET /api/deals/ids`
 - `GET /api/deals/fields`
-- `POST /api/export` (`format=xlsx|docx`, default `xlsx`)
+- `POST /api/export` (`format=xlsx|docx`, default `xlsx`) — возвращает JSON-метаданные готового файла
+- `GET /api/export/status`
+- `POST /api/export/cancel`
+- `GET /api/export/download-last` — скачивание файла
+
+## OpenAPI
+- Спецификация: [docs/openapi.yaml](docs/openapi.yaml)
+- Быстрый просмотр:
+  1. Откройте [Swagger Editor](https://editor.swagger.io/)
+  2. `File -> Import File` и выберите `docs/openapi.yaml`
+- Swagger-аннотации в коде:
+  - Общая мета-информация: `backend/cmd/server/docs.go`
+  - Аннотации по endpoint: `backend/internal/http/handler.go`
+  - Модели ответов/ошибок: `backend/internal/model/api_docs.go`
+- Генерация swagger из комментариев (swaggo):
+  1. `go install github.com/swaggo/swag/cmd/swag@latest`
+  2. `cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter/backend`
+  3. `swag init -g cmd/server/main.go`

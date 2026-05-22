@@ -68,6 +68,13 @@ type apiErrorPayload struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type apiErrorDef struct {
+	HTTPCode int
+	Status   string
+	Message  string
+	Code     string
+}
+
 type apiResponse struct {
 	OK      bool             `json:"ok"`
 	Status  string           `json:"status"`
@@ -76,6 +83,27 @@ type apiResponse struct {
 	Error   *apiErrorPayload `json:"error,omitempty"`
 	Meta    map[string]any   `json:"meta,omitempty"`
 }
+
+var (
+	errMethodNotAllowed = apiErrorDef{
+		HTTPCode: http.StatusMethodNotAllowed,
+		Status:   "method_not_allowed",
+		Message:  "Метод не поддерживается",
+		Code:     "METHOD_NOT_ALLOWED",
+	}
+	errUnauthorized = apiErrorDef{
+		HTTPCode: http.StatusUnauthorized,
+		Status:   "unauthorized",
+		Message:  "Требуется авторизация",
+		Code:     "AUTH_REQUIRED",
+	}
+	errInvalidJSON = apiErrorDef{
+		HTTPCode: http.StatusBadRequest,
+		Status:   "bad_request",
+		Message:  "Некорректный JSON в теле запроса",
+		Code:     "INVALID_JSON",
+	}
+)
 
 func writeAPIResponse(w http.ResponseWriter, httpCode int, body apiResponse) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -112,6 +140,57 @@ func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, d
 	})
 }
 
+func statusFromHTTPCode(httpCode int) string {
+	switch {
+	case httpCode >= 500:
+		return "internal_error"
+	case httpCode == http.StatusUnauthorized:
+		return "unauthorized"
+	case httpCode == http.StatusForbidden:
+		return "forbidden"
+	case httpCode == http.StatusTooManyRequests:
+		return "rate_limited"
+	case httpCode == http.StatusNotFound:
+		return "not_found"
+	case httpCode == http.StatusConflict:
+		return "conflict"
+	case httpCode == http.StatusMethodNotAllowed:
+		return "method_not_allowed"
+	case httpCode >= 400:
+		return "bad_request"
+	default:
+		return "success"
+	}
+}
+
+func writeAPIErrorSimple(w http.ResponseWriter, httpCode int, code, message, detail string) {
+	writeAPIError(w, httpCode, statusFromHTTPCode(httpCode), message, code, detail, nil)
+}
+
+func writeAPIErrorDef(w http.ResponseWriter, def apiErrorDef, detail string, meta map[string]any) {
+	writeAPIError(
+		w,
+		def.HTTPCode,
+		def.Status,
+		def.Message,
+		def.Code,
+		strings.TrimSpace(detail),
+		meta,
+	)
+}
+
+func writeAPIErrorDefSimple(w http.ResponseWriter, def apiErrorDef, detail string) {
+	writeAPIErrorDef(w, def, detail, nil)
+}
+
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	writeAPIErrorDefSimple(w, errMethodNotAllowed, "method not allowed")
+	return false
+}
+
 func New(cfg config.Config) (*Handler, error) {
 	var authManager *auth.Manager
 	if cfg.AuthEnabled {
@@ -145,11 +224,22 @@ func (h *Handler) Close() error {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	guard := h.withAccessControl
+	h.registerHealthRoutes(mux)
+	h.registerStaticRoutes(mux)
+	h.registerAuthRoutes(mux, guard)
+	h.registerDealRoutes(mux, guard)
+	h.registerExportRoutes(mux, guard)
+}
+
+func (h *Handler) registerHealthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
 	logRoute("GET", "/healthz", "Handler.healthz", 0)
 	mux.HandleFunc("/readyz", h.readyz)
 	logRoute("GET", "/readyz", "Handler.readyz", 0)
-	guard := h.withAccessControl
+}
+
+func (h *Handler) registerStaticRoutes(mux *http.ServeMux) {
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), "assets")))))
 	logRoute("GET", "/assets/*", "http.FileServer", 0)
 	mux.Handle("/invest-agent-logo-dark.png", http.FileServer(http.Dir(frontendDistDir())))
@@ -160,24 +250,31 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	logRoute("GET", "/logo1.png", "http.FileServer", 0)
 	mux.Handle("/", http.HandlerFunc(h.ui))
 	logRoute("GET", "/", "Handler.ui", 0)
+}
+
+func (h *Handler) registerAuthRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.HandleFunc("/api/auth/login", h.authLogin)
 	logRoute("POST", "/api/auth/login", "Handler.authLogin", 0)
 	mux.Handle("/api/auth/me", guard(http.HandlerFunc(h.authMe)))
 	logRoute("GET", "/api/auth/me", "Handler.authMe", 0)
 	mux.Handle("/api/auth/logout", guard(http.HandlerFunc(h.authLogout)))
 	logRoute("POST", "/api/auth/logout", "Handler.authLogout", 0)
-	// Сервисные вызовы
+}
+
+func (h *Handler) registerDealRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.Handle("/api/deals/ids", guard(http.HandlerFunc(h.dealIDs)))
 	logRoute("GET", "/api/deals/ids", "Handler.dealIDs", 0)
 	mux.Handle("/api/deals/fields", guard(http.HandlerFunc(h.dealFields)))
 	logRoute("GET", "/api/deals/fields", "Handler.dealFields", 0)
+}
+
+func (h *Handler) registerExportRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.Handle("/api/export/status", guard(http.HandlerFunc(h.exportStatus)))
 	logRoute("GET", "/api/export/status", "Handler.exportStatus", 0)
 	mux.Handle("/api/export/download-last", guard(http.HandlerFunc(h.downloadLastExport)))
 	logRoute("GET", "/api/export/download-last", "Handler.downloadLastExport", 0)
 	mux.Handle("/api/export/cancel", guard(http.HandlerFunc(h.cancelExport)))
 	logRoute("POST", "/api/export/cancel", "Handler.cancelExport", 0)
-	// Основной вызов
 	mux.Handle("/api/export", guard(http.HandlerFunc(h.export)))
 	logRoute("POST", "/api/export", "Handler.export", 0)
 }
@@ -191,7 +288,7 @@ func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	}
 
 	unauthorized := func(w http.ResponseWriter) {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация", "AUTH_REQUIRED", "unauthorized", nil)
+		writeAPIErrorDefSimple(w, errUnauthorized, "unauthorized")
 	}
 
 	tokenAllowed := func(r *http.Request) bool {
@@ -284,17 +381,28 @@ func (h *Handler) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// authLogin godoc
+// @Summary      Вход в систему
+// @Description  Проверяет логин/пароль и создает сессионную cookie bp_session (HttpOnly)
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      object{login=string,password=string}  true  "Login payload"
+// @Success      200   {object}  SwaggerAuthLoginResponse
+// @Failure      400   {object}  SwaggerErrorResponse
+// @Failure      401   {object}  SwaggerErrorResponse
+// @Failure      429   {object}  SwaggerErrorResponse
+// @Router       /api/auth/login [post]
 func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	if h.loginLimiter != nil && !h.loginLimiter.Allow(clientIPFromRequest(r)) {
-		writeAPIError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток входа", "LOGIN_RATE_LIMITED", "too many login attempts, try again later", nil)
+		writeAPIErrorSimple(w, http.StatusTooManyRequests, "LOGIN_RATE_LIMITED", "Слишком много попыток входа", "too many login attempts, try again later")
 		return
 	}
 	if h.auth == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "auth_disabled", "Авторизация отключена на сервере", "AUTH_DISABLED", "auth is disabled", nil)
+		writeAPIErrorSimple(w, http.StatusServiceUnavailable, "AUTH_DISABLED", "Авторизация отключена на сервере", "auth is disabled")
 		return
 	}
 
@@ -303,23 +411,23 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "bad_request", "Некорректный JSON в теле запроса", "INVALID_JSON", "invalid json body", nil)
+		writeAPIErrorDefSimple(w, errInvalidJSON, "invalid json body")
 		return
 	}
 	login := strings.TrimSpace(in.Login)
 	if login == "" || strings.TrimSpace(in.Password) == "" {
-		writeAPIError(w, http.StatusBadRequest, "bad_request", "Логин и пароль обязательны", "AUTH_REQUIRED_FIELDS", "login and password are required", nil)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "AUTH_REQUIRED_FIELDS", "Логин и пароль обязательны", "login and password are required")
 		return
 	}
 
 	user, err := h.auth.Authenticate(r.Context(), login, in.Password)
 	if err != nil {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Неверный логин или пароль", "INVALID_CREDENTIALS", "invalid credentials", nil)
+		writeAPIErrorSimple(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Неверный логин или пароль", "invalid credentials")
 		return
 	}
 	token, expiresAt, err := h.auth.IssueToken(user)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "internal_error", "Не удалось создать сессию", "TOKEN_ISSUE_FAILED", "failed to issue token", nil)
+		writeAPIErrorSimple(w, http.StatusInternalServerError, "TOKEN_ISSUE_FAILED", "Не удалось создать сессию", "failed to issue token")
 		return
 	}
 	h.setSessionCookie(w, r, token, expiresAt)
@@ -331,9 +439,19 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 }
 
+// authMe godoc
+// @Summary      Текущая сессия
+// @Description  Возвращает текущего авторизованного пользователя
+// @Tags         Auth
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      200  {object}  SwaggerAuthMeResponse
+// @Failure      401  {object}  SwaggerErrorResponse
+// @Router       /api/auth/me [get]
 func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	if h.auth == nil {
@@ -347,7 +465,7 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, ok := h.sessionClaimsFromRequest(r)
 	if !ok || claims == nil {
-		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Сессия отсутствует или истекла", "AUTH_REQUIRED", "unauthorized", nil)
+		writeAPIErrorSimple(w, http.StatusUnauthorized, "AUTH_REQUIRED", "Сессия отсутствует или истекла", "unauthorized")
 		return
 	}
 	writeAPISuccess(w, http.StatusOK, "authorized", "Сессия активна", map[string]any{
@@ -359,19 +477,43 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 }
 
+// authLogout godoc
+// @Summary      Выход из системы
+// @Description  Очищает cookie сессии bp_session
+// @Tags         Auth
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      200  {object}  SwaggerLogoutResponse
+// @Router       /api/auth/logout [post]
 func (h *Handler) authLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	h.clearSessionCookie(w, r)
 	writeAPISuccess(w, http.StatusOK, "logged_out", "Выход выполнен", map[string]any{"logged_out": true}, nil)
 }
 
+// healthz godoc
+// @Summary      Liveness probe
+// @Description  Проверка, что процесс жив
+// @Tags         Health
+// @Produce      plain
+// @Success      200  {string}  string  "ok"
+// @Router       /healthz [get]
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// readyz godoc
+// @Summary      Readiness probe
+// @Description  Проверка готовности сервиса (включая auth DB при AUTH_ENABLED=true)
+// @Tags         Health
+// @Produce      plain
+// @Success      200  {string}  string  "ready"
+// @Failure      503  {string}  string  "not ready"
+// @Router       /readyz [get]
 func (h *Handler) readyz(w http.ResponseWriter, _ *http.Request) {
 	if h.auth != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -389,14 +531,13 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	indexPath := filepath.Join(frontendDistDir(), "index.html")
 	body, err := os.ReadFile(indexPath)
 	if err != nil {
-		http.Error(w, "frontend is not built; run frontend build", http.StatusServiceUnavailable)
+		writeAPIErrorSimple(w, http.StatusServiceUnavailable, "FRONTEND_NOT_BUILT", "Фронтенд не собран", "frontend is not built; run frontend build")
 		return
 	}
 	if token := strings.TrimSpace(h.cfg.APIAccessToken); token != "" {
@@ -414,51 +555,70 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+// export godoc
+// @Summary      Запуск выгрузки паспорта проекта
+// @Description  Формирует XLSX/DOCX и возвращает JSON с метаданными готового файла; файл скачивается через /api/export/download-last
+// @Tags         Export
+// @Accept       mpfd
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Param        deal_ids  formData  string  false  "ID сделок через запятую"
+// @Param        file      formData  file    false  "Файл сделок (.xls/.xlsx/.html)"
+// @Param        format    formData  string  false  "Формат файла (xlsx|docx)"  Enums(xlsx,docx)
+// @Success      200       {object}  SwaggerExportResponse
+// @Failure      400       {object}  SwaggerErrorResponse
+// @Failure      401       {object}  SwaggerErrorResponse
+// @Failure      409       {object}  SwaggerErrorResponse
+// @Failure      429       {object}  SwaggerErrorResponse
+// @Failure      500       {object}  SwaggerErrorResponse
+// @Failure      502       {object}  SwaggerErrorResponse
+// @Router       /api/export [post]
 func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	clientIP := clientIPFromRequest(r)
 	if h.exportLimiter != nil && !h.exportLimiter.Allow(clientIP) {
-		http.Error(w, "too many export requests, try again later", http.StatusTooManyRequests)
+		writeAPIErrorSimple(w, http.StatusTooManyRequests, "EXPORT_RATE_LIMITED", "Слишком много запросов на выгрузку", "too many export requests, try again later")
 		return
 	}
 	reqContentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	if strings.Contains(reqContentType, "multipart/form-data") {
 		if err := r.ParseMultipartForm(64 << 20); err != nil {
-			http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
+			writeAPIErrorSimple(w, http.StatusBadRequest, "INVALID_MULTIPART_FORM", "Некорректная multipart-форма", "invalid multipart form: "+err.Error())
 			return
 		}
 	} else {
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "invalid form: "+err.Error(), http.StatusBadRequest)
+			writeAPIErrorSimple(w, http.StatusBadRequest, "INVALID_FORM", "Некорректные параметры запроса", "invalid form: "+err.Error())
 			return
 		}
 	}
 
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
+		writeAPIErrorSimple(w, http.StatusInternalServerError, "WEBHOOK_EMPTY", "Сервер не настроен: не указан webhook Bitrix24", "server is not configured: BITRIX_WEBHOOK_URL is empty")
 		return
 	}
 	projectField := projectFieldCode
 
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "WEBHOOK_INVALID", "Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
 		return
 	}
 	bClient.ConfigureSupportMapping(h.cfg.SupportLinkDealField, h.cfg.SupportMeasureValueField)
 
 	dealIDs, err := parseDealIDs(r.FormValue("deal_ids"), r.FormValue("deal_id"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "INVALID_DEAL_IDS", "Некорректный список ID сделок", err.Error())
 		return
 	}
 	exportFormat, err := parseExportFormat(r.FormValue("format"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "UNSUPPORTED_EXPORT_FORMAT", "Неподдерживаемый формат выгрузки", err.Error())
 		return
 	}
 	exportStartedAt := time.Now()
@@ -496,7 +656,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	fullExportLocked := false
 	if isFullExport {
 		if !h.tryStartFullExport() {
-			http.Error(w, "full export is already running; please wait and retry", http.StatusTooManyRequests)
+			writeAPIErrorSimple(w, http.StatusTooManyRequests, "EXPORT_ALREADY_RUNNING", "Полная выгрузка уже выполняется", "full export is already running; please wait and retry")
 			return
 		}
 		fullExportLocked = true
@@ -539,20 +699,20 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		if isCanceledErr(err) {
 			h.markStatusCanceledByUser()
 			auditErrText = "export canceled by user"
-			http.Error(w, "export canceled by user", http.StatusConflict)
+			writeAPIErrorSimple(w, http.StatusConflict, "EXPORT_CANCELED", "Выгрузка отменена пользователем", "export canceled by user")
 			return
 		}
 		h.markStatusError(err.Error())
 		auditErrText = err.Error()
 		log.WithError(err).WithField("deal_ids", dealIDs).Error("export load projects failed")
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "PROJECTS_LOAD_FAILED", "Не удалось загрузить сделки", err.Error())
 		return
 	}
 	sourceLabel = sourceLabelValue
 	if len(projects) == 0 && sourceLabel != "bitrix_api" {
 		h.markStatusError("no projects found")
 		auditErrText = "no projects found"
-		http.Error(w, "no projects found", http.StatusBadRequest)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "NO_PROJECTS_FOUND", "Сделки не найдены", "no projects found")
 		return
 	}
 	log.WithFields(log.Fields{
@@ -584,11 +744,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			if pageErr != nil {
 				if isCanceledErr(pageErr) {
 					h.markStatusCanceledByUser()
-					http.Error(w, "export canceled by user", http.StatusConflict)
+					writeAPIErrorSimple(w, http.StatusConflict, "EXPORT_CANCELED", "Выгрузка отменена пользователем", "export canceled by user")
 					return
 				}
 				h.markStatusError("failed to load deals page: " + pageErr.Error())
-				http.Error(w, "failed to load deals page: "+pageErr.Error(), http.StatusInternalServerError)
+				writeAPIErrorSimple(w, http.StatusInternalServerError, "DEALS_PAGE_LOAD_FAILED", "Не удалось загрузить страницу сделок из Bitrix24", "failed to load deals page: "+pageErr.Error())
 				return
 			}
 			if len(page.Rows) == 0 {
@@ -632,16 +792,16 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				if isCanceledErr(allErr) {
 					h.markStatusCanceledByUser()
 					auditErrText = "export canceled by user"
-					http.Error(w, "export canceled by user", http.StatusConflict)
+					writeAPIErrorSimple(w, http.StatusConflict, "EXPORT_CANCELED", "Выгрузка отменена пользователем", "export canceled by user")
 					return
 				}
 				auditErrText = "failed to collect tasks: " + allErr.Error()
 				h.markStatusError("failed to collect tasks: " + allErr.Error())
 				if strings.Contains(allErr.Error(), "webhook auth failed") {
-					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+					writeAPIErrorSimple(w, http.StatusBadGateway, "WEBHOOK_AUTH_FAILED", "Webhook Bitrix24 недействителен или истек", "bitrix webhook is invalid or expired")
 					return
 				}
-				http.Error(w, "failed to collect tasks: "+allErr.Error(), http.StatusInternalServerError)
+				writeAPIErrorSimple(w, http.StatusInternalServerError, "TASKS_COLLECT_FAILED", "Не удалось собрать задачи по сделкам", "failed to collect tasks: "+allErr.Error())
 				return
 			}
 			tasks = allTasks
@@ -669,16 +829,16 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 					if isCanceledErr(chunkErr) {
 						h.markStatusCanceledByUser()
 						auditErrText = "export canceled by user"
-						http.Error(w, "export canceled by user", http.StatusConflict)
+						writeAPIErrorSimple(w, http.StatusConflict, "EXPORT_CANCELED", "Выгрузка отменена пользователем", "export canceled by user")
 						return
 					}
 					auditErrText = "failed to collect tasks: " + chunkErr.Error()
 					h.markStatusError("failed to collect tasks: " + chunkErr.Error())
 					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
-						http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+						writeAPIErrorSimple(w, http.StatusBadGateway, "WEBHOOK_AUTH_FAILED", "Webhook Bitrix24 недействителен или истек", "bitrix webhook is invalid or expired")
 						return
 					}
-					http.Error(w, "failed to collect tasks: "+chunkErr.Error(), http.StatusInternalServerError)
+					writeAPIErrorSimple(w, http.StatusInternalServerError, "TASKS_COLLECT_FAILED", "Не удалось собрать задачи по сделкам", "failed to collect tasks: "+chunkErr.Error())
 					return
 				}
 				tasks = append(tasks, chunkTasks...)
@@ -717,16 +877,16 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			if isCanceledErr(callErr) {
 				h.markStatusCanceledByUser()
 				auditErrText = "export canceled by user"
-				http.Error(w, "export canceled by user", http.StatusConflict)
+				writeAPIErrorSimple(w, http.StatusConflict, "EXPORT_CANCELED", "Выгрузка отменена пользователем", "export canceled by user")
 				return
 			}
 			auditErrText = "failed to collect tasks: " + callErr.Error()
 			h.markStatusError("failed to collect tasks: " + callErr.Error())
 			if strings.Contains(callErr.Error(), "webhook auth failed") {
-				http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
+				writeAPIErrorSimple(w, http.StatusBadGateway, "WEBHOOK_AUTH_FAILED", "Webhook Bitrix24 недействителен или истек", "bitrix webhook is invalid or expired")
 				return
 			}
-			http.Error(w, "failed to collect tasks: "+callErr.Error(), http.StatusInternalServerError)
+			writeAPIErrorSimple(w, http.StatusInternalServerError, "TASKS_COLLECT_FAILED", "Не удалось собрать задачи по сделкам", "failed to collect tasks: "+callErr.Error())
 			return
 		}
 	}
@@ -764,7 +924,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		auditErrText = "failed to build export file: " + err.Error()
 		h.markStatusError("failed to build export file: " + err.Error())
-		http.Error(w, "failed to build export file: "+err.Error(), http.StatusInternalServerError)
+		writeAPIErrorSimple(w, http.StatusInternalServerError, "EXPORT_BUILD_FAILED", "Не удалось сформировать файл выгрузки", "failed to build export file: "+err.Error())
 		return
 	}
 	// Unlock before writing response, so long file transfer does not block next run.
@@ -901,9 +1061,19 @@ func (h *Handler) markStatusCanceledByUser() {
 	})
 }
 
+// exportStatus godoc
+// @Summary      Статус выгрузки
+// @Description  Возвращает текущее состояние процесса выгрузки
+// @Tags         Export
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      200  {object}  SwaggerExportStatusResponse
+// @Failure      401  {object}  SwaggerErrorResponse
+// @Router       /api/export/status [get]
 func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	h.mu.Lock()
@@ -914,16 +1084,27 @@ func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cancelExport godoc
+// @Summary      Отмена активной выгрузки
+// @Description  Отправляет запрос на остановку текущей выгрузки
+// @Tags         Export
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      202  {object}  SwaggerCancelExportResponse
+// @Failure      401  {object}  SwaggerErrorResponse
+// @Failure      409  {object}  SwaggerErrorResponse
+// @Router       /api/export/cancel [post]
 func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	h.mu.Lock()
 	cancel := h.fullExportCancel
 	if !h.status.Running || cancel == nil {
 		h.mu.Unlock()
-		writeAPIError(w, http.StatusConflict, "no_running_export", "Нет активной выгрузки для отмены", "NO_EXPORT_RUNNING", "no export is running", nil)
+		writeAPIErrorSimple(w, http.StatusConflict, "NO_EXPORT_RUNNING", "Нет активной выгрузки для отмены", "no export is running")
 		return
 	}
 	alreadyRequested := h.cancelRequestedByUser
@@ -951,9 +1132,21 @@ func isCanceledErr(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "context canceled")
 }
 
+// downloadLastExport godoc
+// @Summary      Скачать последний сформированный файл
+// @Description  Возвращает бинарный файл последней успешной выгрузки
+// @Tags         Export
+// @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Produce      application/vnd.openxmlformats-officedocument.wordprocessingml.document
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      200  {file}    file
+// @Failure      401  {object}  SwaggerErrorResponse
+// @Failure      404  {object}  SwaggerErrorResponse
+// @Router       /api/export/download-last [get]
 func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	h.mu.Lock()
@@ -962,7 +1155,7 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	contentType := strings.TrimSpace(h.lastContentType)
 	h.mu.Unlock()
 	if path == "" {
-		http.Error(w, "no ready export file", http.StatusNotFound)
+		writeAPIErrorSimple(w, http.StatusNotFound, "EXPORT_FILE_NOT_FOUND", "Готовый файл выгрузки не найден", "no ready export file")
 		return
 	}
 	if strings.TrimSpace(filename) == "" {
@@ -977,7 +1170,7 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		http.Error(w, "no ready export file", http.StatusNotFound)
+		writeAPIErrorSimple(w, http.StatusNotFound, "EXPORT_FILE_NOT_FOUND", "Готовый файл выгрузки не найден", "no ready export file")
 		return
 	}
 	defer f.Close()
@@ -1088,21 +1281,33 @@ func countSupportItems(s string) int {
 	return count
 }
 
+// dealIDs godoc
+// @Summary      Получить ID сделок из Bitrix24
+// @Description  Загружает полный список ID сделок
+// @Tags         Deals
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      200  {object}  SwaggerDealIDsResponse
+// @Failure      400  {object}  SwaggerErrorResponse
+// @Failure      401  {object}  SwaggerErrorResponse
+// @Failure      502  {object}  SwaggerErrorResponse
+// @Router       /api/deals/ids [get]
 func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		writeAPIError(w, http.StatusInternalServerError, "server_not_configured", "Сервер не настроен: не указан webhook Bitrix24", "WEBHOOK_EMPTY", "server is not configured: BITRIX_WEBHOOK_URL is empty", nil)
+		writeAPIErrorSimple(w, http.StatusInternalServerError, "WEBHOOK_EMPTY", "Сервер не настроен: не указан webhook Bitrix24", "server is not configured: BITRIX_WEBHOOK_URL is empty")
 		return
 	}
 
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_webhook", "Некорректный webhook Bitrix24", "WEBHOOK_INVALID", "invalid webhook: "+err.Error(), nil)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "WEBHOOK_INVALID", "Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
 		return
 	}
 
@@ -1112,7 +1317,7 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	deals, err := bClient.ListDealIDs(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal ids load failed")
-		writeAPIError(w, http.StatusBadGateway, "bitrix_error", "Не удалось загрузить ID сделок", "DEAL_IDS_LOAD_FAILED", "failed to load deal ids: "+err.Error(), nil)
+		writeAPIErrorSimple(w, http.StatusBadGateway, "DEAL_IDS_LOAD_FAILED", "Не удалось загрузить ID сделок", "failed to load deal ids: "+err.Error())
 		return
 	}
 
@@ -1122,19 +1327,31 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 }
 
+// dealFields godoc
+// @Summary      Получить поля сделок из Bitrix24
+// @Description  Возвращает список всех полей сущности CRM Deal
+// @Tags         Deals
+// @Produce      json
+// @Security     CookieAuth
+// @Security     ApiKeyAuth
+// @Security     BearerAuth
+// @Success      200  {object}  SwaggerDealFieldsResponse
+// @Failure      400  {object}  SwaggerErrorResponse
+// @Failure      401  {object}  SwaggerErrorResponse
+// @Failure      502  {object}  SwaggerErrorResponse
+// @Router       /api/deals/fields [get]
 func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		writeAPIError(w, http.StatusInternalServerError, "server_not_configured", "Сервер не настроен: не указан webhook Bitrix24", "WEBHOOK_EMPTY", "server is not configured: BITRIX_WEBHOOK_URL is empty", nil)
+		writeAPIErrorSimple(w, http.StatusInternalServerError, "WEBHOOK_EMPTY", "Сервер не настроен: не указан webhook Bitrix24", "server is not configured: BITRIX_WEBHOOK_URL is empty")
 		return
 	}
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_webhook", "Некорректный webhook Bitrix24", "WEBHOOK_INVALID", "invalid webhook: "+err.Error(), nil)
+		writeAPIErrorSimple(w, http.StatusBadRequest, "WEBHOOK_INVALID", "Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -1142,7 +1359,7 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	fields, err := bClient.ListDealFields(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal fields load failed")
-		writeAPIError(w, http.StatusBadGateway, "bitrix_error", "Не удалось загрузить поля сделок", "DEAL_FIELDS_LOAD_FAILED", "failed to load deal fields: "+err.Error(), nil)
+		writeAPIErrorSimple(w, http.StatusBadGateway, "DEAL_FIELDS_LOAD_FAILED", "Не удалось загрузить поля сделок", "failed to load deal fields: "+err.Error())
 		return
 	}
 	writeAPISuccess(w, http.StatusOK, "deal_fields_loaded", "Поля сделок загружены", map[string]any{
