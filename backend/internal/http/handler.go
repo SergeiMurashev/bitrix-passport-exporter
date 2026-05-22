@@ -63,6 +63,55 @@ type exportStatus struct {
 	LastError            string    `json:"last_error,omitempty"`
 }
 
+type apiErrorPayload struct {
+	Code   string `json:"code,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type apiResponse struct {
+	OK      bool             `json:"ok"`
+	Status  string           `json:"status"`
+	Message string           `json:"message,omitempty"`
+	Data    any              `json:"data,omitempty"`
+	Error   *apiErrorPayload `json:"error,omitempty"`
+	Meta    map[string]any   `json:"meta,omitempty"`
+}
+
+func writeAPIResponse(w http.ResponseWriter, httpCode int, body apiResponse) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(httpCode)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func writeAPISuccess(w http.ResponseWriter, httpCode int, status, message string, data any, meta map[string]any) {
+	if strings.TrimSpace(status) == "" {
+		status = "success"
+	}
+	writeAPIResponse(w, httpCode, apiResponse{
+		OK:      true,
+		Status:  status,
+		Message: strings.TrimSpace(message),
+		Data:    data,
+		Meta:    meta,
+	})
+}
+
+func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, detail string, meta map[string]any) {
+	if strings.TrimSpace(status) == "" {
+		status = "error"
+	}
+	writeAPIResponse(w, httpCode, apiResponse{
+		OK:      false,
+		Status:  status,
+		Message: strings.TrimSpace(message),
+		Error: &apiErrorPayload{
+			Code:   strings.TrimSpace(code),
+			Detail: strings.TrimSpace(detail),
+		},
+		Meta: meta,
+	})
+}
+
 func New(cfg config.Config) (*Handler, error) {
 	var authManager *auth.Manager
 	if cfg.AuthEnabled {
@@ -142,7 +191,7 @@ func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	}
 
 	unauthorized := func(w http.ResponseWriter) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация", "AUTH_REQUIRED", "unauthorized", nil)
 	}
 
 	tokenAllowed := func(r *http.Request) bool {
@@ -237,15 +286,15 @@ func (h *Handler) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 	if h.loginLimiter != nil && !h.loginLimiter.Allow(clientIPFromRequest(r)) {
-		http.Error(w, "too many login attempts, try again later", http.StatusTooManyRequests)
+		writeAPIError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток входа", "LOGIN_RATE_LIMITED", "too many login attempts, try again later", nil)
 		return
 	}
 	if h.auth == nil {
-		http.Error(w, "auth is disabled", http.StatusServiceUnavailable)
+		writeAPIError(w, http.StatusServiceUnavailable, "auth_disabled", "Авторизация отключена на сервере", "AUTH_DISABLED", "auth is disabled", nil)
 		return
 	}
 
@@ -254,75 +303,69 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "Некорректный JSON в теле запроса", "INVALID_JSON", "invalid json body", nil)
 		return
 	}
 	login := strings.TrimSpace(in.Login)
 	if login == "" || strings.TrimSpace(in.Password) == "" {
-		http.Error(w, "login and password are required", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "Логин и пароль обязательны", "AUTH_REQUIRED_FIELDS", "login and password are required", nil)
 		return
 	}
 
 	user, err := h.auth.Authenticate(r.Context(), login, in.Password)
 	if err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Неверный логин или пароль", "INVALID_CREDENTIALS", "invalid credentials", nil)
 		return
 	}
 	token, expiresAt, err := h.auth.IssueToken(user)
 	if err != nil {
-		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "Не удалось создать сессию", "TOKEN_ISSUE_FAILED", "failed to issue token", nil)
 		return
 	}
 	h.setSessionCookie(w, r, token, expiresAt)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":         true,
-		"token":      token,
+	w.Header().Set("Cache-Control", "no-store")
+	writeAPISuccess(w, http.StatusOK, "authorized", "Вход выполнен", map[string]any{
 		"expires_at": expiresAt.UTC(),
+		"session":    "cookie",
 		"user":       user,
-	})
+	}, nil)
 }
 
 func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 	if h.auth == nil {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
+		writeAPISuccess(w, http.StatusOK, "authorized", "Сессия активна", map[string]any{
 			"user": map[string]any{
 				"id":    0,
 				"login": "system",
 			},
-		})
+		}, nil)
 		return
 	}
 	claims, ok := h.sessionClaimsFromRequest(r)
 	if !ok || claims == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "Сессия отсутствует или истекла", "AUTH_REQUIRED", "unauthorized", nil)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok": true,
+	writeAPISuccess(w, http.StatusOK, "authorized", "Сессия активна", map[string]any{
 		"user": map[string]any{
 			"id":    claims.UserID,
 			"login": claims.Login,
 		},
 		"expires_at": claims.ExpiresAt.Time.UTC(),
-	})
+	}, nil)
 }
 
 func (h *Handler) authLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 	h.clearSessionCookie(w, r)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeAPISuccess(w, http.StatusOK, "logged_out", "Выход выполнен", map[string]any{"logged_out": true}, nil)
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
@@ -749,14 +792,21 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Export-Support-Measures-Total", strconv.Itoa(stats.SupportMeasuresTotal))
 	w.Header().Set("X-Export-Issues-Count", strconv.Itoa(len(issues)))
 	w.Header().Set("X-Export-File-Name", filename)
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
-	w.WriteHeader(http.StatusOK)
-	if _, writeErr := w.Write(result); writeErr != nil {
-		auditErrText = "export response write failed: " + writeErr.Error()
-		log.WithError(writeErr).Warn("export response write failed")
-		return
-	}
+	writeAPISuccess(w, http.StatusOK, "export_completed", "Выгрузка завершена, файл готов к скачиванию", map[string]any{
+		"file_name":    filename,
+		"content_type": contentType,
+		"size_bytes":   len(result),
+		"download_url": "/api/export/download-last",
+		"format":       exportFormat,
+		"source":       sourceLabel,
+		"issues_count": len(issues),
+		"stats": map[string]any{
+			"deals_total":            stats.DealsTotal,
+			"tasks_total":            stats.TasksTotal,
+			"deals_with_support":     stats.DealsWithSupport,
+			"support_measures_total": stats.SupportMeasuresTotal,
+		},
+	}, nil)
 	auditSuccess = true
 }
 
@@ -805,7 +855,11 @@ func (h *Handler) storeLastResult(data []byte, filename, contentType string) {
 		log.WithError(err).Warn("failed to prepare temp dir for last export")
 		return
 	}
-	tmpPath := filepath.Join(baseDir, fmt.Sprintf("last-export-%d.xlsx", time.Now().UnixNano()))
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(filename)))
+	if ext == "" {
+		ext = ".bin"
+	}
+	tmpPath := filepath.Join(baseDir, fmt.Sprintf("last-export-%d%s", time.Now().UnixNano(), ext))
 	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		log.WithError(err).Warn("failed to persist last export to disk")
 		return
@@ -849,26 +903,27 @@ func (h *Handler) markStatusCanceledByUser() {
 
 func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 	h.mu.Lock()
 	status := h.status
 	h.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(status)
+	writeAPISuccess(w, http.StatusOK, "export_status", "Текущий статус выгрузки", status, map[string]any{
+		"generated_at": time.Now().UTC(),
+	})
 }
 
 func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 	h.mu.Lock()
 	cancel := h.fullExportCancel
 	if !h.status.Running || cancel == nil {
 		h.mu.Unlock()
-		http.Error(w, "no export is running", http.StatusConflict)
+		writeAPIError(w, http.StatusConflict, "no_running_export", "Нет активной выгрузки для отмены", "NO_EXPORT_RUNNING", "no export is running", nil)
 		return
 	}
 	alreadyRequested := h.cancelRequestedByUser
@@ -881,12 +936,9 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 		log.Info("full export cancel requested by user")
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":               true,
+	writeAPISuccess(w, http.StatusAccepted, "cancel_requested", "Запрос на отмену выгрузки отправлен", map[string]any{
 		"cancel_requested": true,
-	})
+	}, nil)
 }
 
 func isCanceledErr(err error) bool {
@@ -1038,19 +1090,19 @@ func countSupportItems(s string) int {
 
 func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "server_not_configured", "Сервер не настроен: не указан webhook Bitrix24", "WEBHOOK_EMPTY", "server is not configured: BITRIX_WEBHOOK_URL is empty", nil)
 		return
 	}
 
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_webhook", "Некорректный webhook Bitrix24", "WEBHOOK_INVALID", "invalid webhook: "+err.Error(), nil)
 		return
 	}
 
@@ -1060,30 +1112,29 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	deals, err := bClient.ListDealIDs(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal ids load failed")
-		http.Error(w, "failed to load deal ids: "+err.Error(), http.StatusBadGateway)
+		writeAPIError(w, http.StatusBadGateway, "bitrix_error", "Не удалось загрузить ID сделок", "DEAL_IDS_LOAD_FAILED", "failed to load deal ids: "+err.Error(), nil)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	writeAPISuccess(w, http.StatusOK, "deal_ids_loaded", "Список ID сделок загружен", map[string]any{
 		"count": len(deals),
 		"deals": deals,
-	})
+	}, nil)
 }
 
 func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", "METHOD_NOT_ALLOWED", "method not allowed", nil)
 		return
 	}
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		http.Error(w, "server is not configured: BITRIX_WEBHOOK_URL is empty", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "server_not_configured", "Сервер не настроен: не указан webhook Bitrix24", "WEBHOOK_EMPTY", "server is not configured: BITRIX_WEBHOOK_URL is empty", nil)
 		return
 	}
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		http.Error(w, "invalid webhook: "+err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_webhook", "Некорректный webhook Bitrix24", "WEBHOOK_INVALID", "invalid webhook: "+err.Error(), nil)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -1091,14 +1142,13 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	fields, err := bClient.ListDealFields(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal fields load failed")
-		http.Error(w, "failed to load deal fields: "+err.Error(), http.StatusBadGateway)
+		writeAPIError(w, http.StatusBadGateway, "bitrix_error", "Не удалось загрузить поля сделок", "DEAL_FIELDS_LOAD_FAILED", "failed to load deal fields: "+err.Error(), nil)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	writeAPISuccess(w, http.StatusOK, "deal_fields_loaded", "Поля сделок загружены", map[string]any{
 		"count":  len(fields),
 		"fields": fields,
-	})
+	}, nil)
 }
 
 func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]model.ProjectRow, string, error) {

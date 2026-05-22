@@ -137,6 +137,24 @@ body.theme-light .brand-logo-light {
   background: rgba(20, 36, 60, 0.45);
 }
 
+.auth-panel label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.auth-panel input[type="text"],
+.auth-panel input[type="password"] {
+  font-size: 16px;
+  line-height: 1.25;
+  min-height: 50px;
+  padding: 12px 14px;
+}
+
+.auth-panel input[type="text"]::placeholder,
+.auth-panel input[type="password"]::placeholder {
+  font-size: 14px;
+}
+
 .mode {
   display: block;
   margin: 9px 0;

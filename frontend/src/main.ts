@@ -17,11 +17,38 @@ type ExportStatus = {
   last_file_name?: string
   last_error?: string
 }
-type AuthMeResponse = {
-  ok: boolean
+type ApiError = {
+  code?: string
+  detail?: string
+}
+type ApiResponse<T> = {
+  ok?: boolean
+  status?: string
+  message?: string
+  data?: T
+  error?: ApiError
+  meta?: Record<string, unknown>
+}
+type AuthMeData = {
   user?: {
     id: number
     login: string
+  }
+  expires_at?: string
+}
+type ExportRunData = {
+  file_name?: string
+  content_type?: string
+  size_bytes?: number
+  download_url?: string
+  format?: string
+  source?: string
+  issues_count?: number
+  stats?: {
+    deals_total?: number
+    tasks_total?: number
+    deals_with_support?: number
+    support_measures_total?: number
   }
 }
 
@@ -216,6 +243,30 @@ function setProgress(visible: boolean, phaseText = 'Подготовка…') {
   progressPhase.textContent = phaseText
 }
 
+function unwrapApiData<T>(payload: unknown): T {
+  if (payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>
+    if ('data' in obj) {
+      return obj.data as T
+    }
+  }
+  return payload as T
+}
+
+async function readErrorMessage(res: Response): Promise<string> {
+  const rawText = await res.text()
+  const fallback = rawText || `HTTP ${res.status}`
+  try {
+    const parsed = JSON.parse(rawText) as ApiResponse<unknown>
+    if (parsed?.message) return parsed.message
+    if (parsed?.error?.detail) return parsed.error.detail
+    if (parsed?.status) return parsed.status
+    return fallback
+  } catch (_err) {
+    return fallback
+  }
+}
+
 function detectPhase(data: ExportStatus): string {
   if (!data.running) return 'Готово'
   const phase = (data.phase || '').toLowerCase()
@@ -247,8 +298,9 @@ async function checkAuth(): Promise<boolean> {
       setStatus('Войдите в систему для работы с выгрузкой.', 'muted')
       return false
     }
-    const data = await res.json() as AuthMeResponse
-    const login = data.user?.login || ''
+    const payload = await res.json() as ApiResponse<AuthMeData> | AuthMeData
+    const data = unwrapApiData<AuthMeData>(payload)
+    const login = data?.user?.login || ''
     setAuthState(true, login)
     return true
   } catch (_err) {
@@ -369,7 +421,7 @@ loginForm.addEventListener('submit', (e) => {
           password: authPasswordEl.value,
         }),
       })
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
+      if (!res.ok) throw new Error(await readErrorMessage(res))
       const ok = await checkAuth()
       if (ok) {
         authPasswordEl.value = ''
@@ -415,32 +467,32 @@ form.addEventListener('submit', async (e) => {
     body.set('format', exportFormat)
 
     const res = await fetch('/api/export', { method: 'POST', body })
-    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
-
-    const blob = await res.blob()
-    const fileName = res.headers.get('x-export-file-name') || `passport_and_tasks.${exportFormat}`
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = fileName
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-
+    if (!res.ok) throw new Error(await readErrorMessage(res))
+    const payload = await res.json() as ApiResponse<ExportRunData> | ExportRunData
+    const data = unwrapApiData<ExportRunData>(payload)
+    const stats = data?.stats || {}
+    const fileName = data?.file_name || `passport_and_tasks.${exportFormat}`
+    const fileSize = typeof data?.size_bytes === 'number' ? `${Math.max(0, data.size_bytes)} байт` : '-'
     setStatus(
-      `Готово. Сделок: ${res.headers.get('x-export-deals-total') || '-'}, задач: ${res.headers.get('x-export-tasks-total') || '-'}, ` +
-      `сделок с мерами: ${res.headers.get('x-export-deals-with-support') || '-'}, мер поддержки: ${res.headers.get('x-export-support-measures-total') || '-'}.`,
+      `Готово. Файл: ${fileName}, размер: ${fileSize}. ` +
+      `Сделок: ${stats.deals_total ?? '-'}, задач: ${stats.tasks_total ?? '-'}, ` +
+      `сделок с мерами: ${stats.deals_with_support ?? '-'}, мер поддержки: ${stats.support_measures_total ?? '-'}.`,
       'ok',
     )
     setStatusLines([
       { label: 'Режим', value: mode === 'all' ? 'Все сделки' : mode === 'ids' ? 'По ID' : 'Из файла' },
-      { label: 'Формат', value: exportFormat.toUpperCase() },
-      { label: 'Сделок', value: res.headers.get('x-export-deals-total') || '-' },
-      { label: 'Задач', value: res.headers.get('x-export-tasks-total') || '-' },
-      { label: 'Сделок с мерами', value: res.headers.get('x-export-deals-with-support') || '-' },
-      { label: 'Мер поддержки', value: res.headers.get('x-export-support-measures-total') || '-' },
+      { label: 'Формат', value: (data?.format || exportFormat).toUpperCase() },
+      { label: 'Источник', value: data?.source || '-' },
+      { label: 'Файл', value: fileName },
+      { label: 'Размер', value: fileSize },
+      { label: 'Сделок', value: stats.deals_total ?? '-' },
+      { label: 'Задач', value: stats.tasks_total ?? '-' },
+      { label: 'Сделок с мерами', value: stats.deals_with_support ?? '-' },
+      { label: 'Мер поддержки', value: stats.support_measures_total ?? '-' },
+      { label: 'Предупреждений', value: data?.issues_count ?? 0 },
     ])
+    downloadLastBtn.classList.remove('hidden')
+    downloadLastBtn.textContent = `Скачать готовый файл (${fileName})`
     setProgress(false)
   } catch (error) {
     setStatus(humanizeError((error as Error).message || ''), 'err')
@@ -459,7 +511,7 @@ cancelExportBtn.addEventListener('click', () => {
     cancelExportBtn.disabled = true
     try {
       const res = await fetch('/api/export/cancel', { method: 'POST' })
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
+      if (!res.ok) throw new Error(await readErrorMessage(res))
       setStatus('Запрос на отмену отправлен. Ожидайте остановки выгрузки.', 'muted')
       await refreshExportStatus()
     } catch (error) {
@@ -473,7 +525,7 @@ downloadLastBtn.addEventListener('click', () => {
   void (async () => {
     try {
       const res = await fetch('/api/export/download-last')
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`)
+      if (!res.ok) throw new Error(await readErrorMessage(res))
       const blob = await res.blob()
       const fileName = getFilenameFromDisposition(res.headers.get('content-disposition'))
         || 'bitrix_last_export_passport_and_tasks.xlsx'
@@ -500,7 +552,8 @@ async function refreshExportStatus() {
       return
     }
     if (!res.ok) return
-    const data = await res.json() as ExportStatus
+    const payload = await res.json() as ApiResponse<ExportStatus> | ExportStatus
+    const data = unwrapApiData<ExportStatus>(payload)
 
     if (data.running) {
       submitBtn.disabled = true
