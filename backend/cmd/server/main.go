@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
 	httpapi "github.com/SergeiMurashev/bitrix-passport-exporter/internal/http"
@@ -16,6 +22,9 @@ func main() {
 	log.SetLevel(log.InfoLevel)
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.WithError(err).Fatal("invalid configuration")
+	}
 	mux := http.NewServeMux()
 	h, err := httpapi.New(cfg)
 	if err != nil {
@@ -24,15 +33,37 @@ func main() {
 	defer h.Close()
 	h.Register(mux)
 
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      mux,
+		ReadTimeout:  time.Duration(cfg.HTTPReadTimeoutSeconds) * time.Second,
+		WriteTimeout: time.Duration(cfg.HTTPWriteTimeoutSeconds) * time.Second,
+		IdleTimeout:  time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
+	}
+
 	point, short := callerPoint(1)
 	log.WithFields(log.Fields{
 		"addr":        cfg.Addr,
 		"point":       point,
 		"short_point": short,
 	}).Info("server started successfully")
-	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
-		log.WithError(err).Fatal("http server stopped")
+	go func() {
+		if serveErr := httpServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			log.WithError(serveErr).Fatal("http server stopped")
+		}
+	}()
+
+	stopCh := make(chan os.Signal, 1)
+	signal.Notify(stopCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	sig := <-stopCh
+	log.WithField("signal", sig.String()).Info("shutdown signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.HTTPShutdownTimeoutSecs)*time.Second)
+	defer cancel()
+	if shutdownErr := httpServer.Shutdown(ctx); shutdownErr != nil {
+		log.WithError(shutdownErr).Error("graceful shutdown failed")
 	}
+	log.Info("server stopped")
 }
 
 func callerPoint(skip int) (string, string) {

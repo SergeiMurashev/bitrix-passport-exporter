@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,12 @@ type Config struct {
 	Webhook                  string
 	TaskWorkers              int
 	TaskStrategy             string
+	HTTPReadTimeoutSeconds   int
+	HTTPWriteTimeoutSeconds  int
+	HTTPIdleTimeoutSeconds   int
+	HTTPShutdownTimeoutSecs  int
+	RateLimitLoginPerMinute  int
+	RateLimitExportPerMinute int
 	SupportLinkDealField     string
 	SupportMeasureValueField string
 	APIAccessToken           string
@@ -35,6 +42,12 @@ func Load() Config {
 		Webhook:                  env("BITRIX_WEBHOOK_URL", ""),
 		TaskWorkers:              envInt("TASK_WORKERS", 10),
 		TaskStrategy:             env("TASK_STRATEGY", "per_deal"),
+		HTTPReadTimeoutSeconds:   envInt("HTTP_READ_TIMEOUT_SECONDS", 20),
+		HTTPWriteTimeoutSeconds:  envInt("HTTP_WRITE_TIMEOUT_SECONDS", 3600),
+		HTTPIdleTimeoutSeconds:   envInt("HTTP_IDLE_TIMEOUT_SECONDS", 120),
+		HTTPShutdownTimeoutSecs:  envInt("HTTP_SHUTDOWN_TIMEOUT_SECONDS", 20),
+		RateLimitLoginPerMinute:  envIntAllowZero("RATE_LIMIT_LOGIN_PER_MINUTE", 20),
+		RateLimitExportPerMinute: envIntAllowZero("RATE_LIMIT_EXPORT_PER_MINUTE", 6),
 		SupportLinkDealField:     env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
 		SupportMeasureValueField: env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
 		APIAccessToken:           env("API_ACCESS_TOKEN", ""),
@@ -47,6 +60,31 @@ func Load() Config {
 		AuthUser2Login:           env("AUTH_USER_2_LOGIN", ""),
 		AuthUser2Password:        env("AUTH_USER_2_PASSWORD", ""),
 	}
+}
+
+func (c Config) Validate() error {
+	if strings.TrimSpace(c.Addr) == "" {
+		return errors.New("ADDR is empty")
+	}
+	strategy := strings.ToLower(strings.TrimSpace(c.TaskStrategy))
+	if strategy != "bulk" && strategy != "per_deal" {
+		return fmt.Errorf("TASK_STRATEGY must be one of: bulk, per_deal (got %q)", c.TaskStrategy)
+	}
+	if c.AuthEnabled {
+		if strings.TrimSpace(c.AuthDBDSN) == "" {
+			return errors.New("AUTH_ENABLED=true requires AUTH_DB_DSN")
+		}
+		if strings.TrimSpace(c.AuthJWTSecret) == "" {
+			return errors.New("AUTH_ENABLED=true requires AUTH_JWT_SECRET")
+		}
+	}
+	if c.RateLimitLoginPerMinute < 0 {
+		return errors.New("RATE_LIMIT_LOGIN_PER_MINUTE must be >= 0")
+	}
+	if c.RateLimitExportPerMinute < 0 {
+		return errors.New("RATE_LIMIT_EXPORT_PER_MINUTE must be >= 0")
+	}
+	return nil
 }
 
 func loadDotEnvIfPresent() {
@@ -112,6 +150,19 @@ func envInt(key string, fallback int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
+		fmt.Printf("invalid %s=%q; using default %d\n", key, v, fallback)
+		return fallback
+	}
+	return n
+}
+
+func envIntAllowZero(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
 		fmt.Printf("invalid %s=%q; using default %d\n", key, v, fallback)
 		return fallback
 	}

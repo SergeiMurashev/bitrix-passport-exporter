@@ -27,6 +27,22 @@ type User struct {
 	Login string `json:"login"`
 }
 
+type ExportAuditRecord struct {
+	UserID               int64
+	UserLogin            string
+	ClientIP             string
+	Source               string
+	Mode                 string
+	Format               string
+	Success              bool
+	ErrorText            string
+	DurationMs           int64
+	DealsTotal           int
+	TasksTotal           int
+	DealsWithSupport     int
+	SupportMeasuresTotal int
+}
+
 type Claims struct {
 	UserID int64  `json:"uid"`
 	Login  string `json:"login"`
@@ -98,6 +114,13 @@ func (m *Manager) Close() error {
 		return nil
 	}
 	return m.db.Close()
+}
+
+func (m *Manager) Ready(ctx context.Context) error {
+	if m == nil || m.db == nil {
+		return errors.New("auth manager is not initialized")
+	}
+	return m.db.PingContext(ctx)
 }
 
 func (m *Manager) initSchema(ctx context.Context) error {
@@ -183,6 +206,55 @@ func (m *Manager) ParseToken(token string) (*Claims, error) {
 		return nil, errors.New("invalid token claims")
 	}
 	return claims, nil
+}
+
+func (m *Manager) RecordExportAudit(ctx context.Context, rec ExportAuditRecord) error {
+	if m == nil || m.db == nil {
+		return errors.New("auth manager is not initialized")
+	}
+	const q = `
+INSERT INTO export_audit_logs (
+	user_id,
+	user_login,
+	client_ip,
+	source,
+	mode,
+	format,
+	success,
+	error_text,
+	duration_ms,
+	deals_total,
+	tasks_total,
+	deals_with_support,
+	support_measures_total
+) VALUES (
+	$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+);`
+	var userID any
+	if rec.UserID > 0 {
+		userID = rec.UserID
+	}
+	_, err := m.db.ExecContext(
+		ctx,
+		q,
+		userID,
+		strings.TrimSpace(rec.UserLogin),
+		strings.TrimSpace(rec.ClientIP),
+		strings.TrimSpace(rec.Source),
+		strings.TrimSpace(rec.Mode),
+		strings.TrimSpace(rec.Format),
+		rec.Success,
+		strings.TrimSpace(rec.ErrorText),
+		rec.DurationMs,
+		rec.DealsTotal,
+		rec.TasksTotal,
+		rec.DealsWithSupport,
+		rec.SupportMeasuresTotal,
+	)
+	if err != nil {
+		return fmt.Errorf("insert export audit: %w", err)
+	}
+	return nil
 }
 
 func CookieName() string {

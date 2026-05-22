@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -30,6 +31,8 @@ import (
 type Handler struct {
 	cfg                   config.Config
 	auth                  *auth.Manager
+	loginLimiter          *rateWindowLimiter
+	exportLimiter         *rateWindowLimiter
 	mu                    sync.Mutex
 	fullExportBusy        bool
 	fullExportCancel      context.CancelFunc
@@ -72,8 +75,13 @@ func New(cfg config.Config) (*Handler, error) {
 		}
 	}
 	return &Handler{
-		cfg:  cfg,
-		auth: authManager,
+		cfg:          cfg,
+		auth:         authManager,
+		loginLimiter: newRateWindowLimiter(cfg.RateLimitLoginPerMinute, time.Minute),
+		exportLimiter: newRateWindowLimiter(
+			cfg.RateLimitExportPerMinute,
+			time.Minute,
+		),
 		status: exportStatus{
 			Phase: "idle",
 		},
@@ -90,6 +98,8 @@ func (h *Handler) Close() error {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
 	logRoute("GET", "/healthz", "Handler.healthz", 0)
+	mux.HandleFunc("/readyz", h.readyz)
+	logRoute("GET", "/readyz", "Handler.readyz", 0)
 	guard := h.withAccessControl
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), "assets")))))
 	logRoute("GET", "/assets/*", "http.FileServer", 0)
@@ -230,6 +240,10 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if h.loginLimiter != nil && !h.loginLimiter.Allow(clientIPFromRequest(r)) {
+		http.Error(w, "too many login attempts, try again later", http.StatusTooManyRequests)
+		return
+	}
 	if h.auth == nil {
 		http.Error(w, "auth is disabled", http.StatusServiceUnavailable)
 		return
@@ -315,6 +329,18 @@ func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+func (h *Handler) readyz(w http.ResponseWriter, _ *http.Request) {
+	if h.auth != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := h.auth.Ready(ctx); err != nil {
+			http.Error(w, "not ready: auth db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	_, _ = w.Write([]byte("ready"))
+}
+
 func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -348,6 +374,11 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	clientIP := clientIPFromRequest(r)
+	if h.exportLimiter != nil && !h.exportLimiter.Allow(clientIP) {
+		http.Error(w, "too many export requests, try again later", http.StatusTooManyRequests)
 		return
 	}
 	reqContentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
@@ -387,6 +418,36 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	exportStartedAt := time.Now()
+	claims, _ := h.sessionClaimsFromRequest(r)
+	exportMode := detectExportMode(r, dealIDs)
+	sourceLabel := "unknown"
+	auditSuccess := false
+	auditErrText := ""
+	var stats service.ExportStats
+	defer func() {
+		if auditSuccess {
+			auditErrText = ""
+		}
+		if !auditSuccess && strings.TrimSpace(auditErrText) == "" {
+			auditErrText = "request failed"
+		}
+		h.recordExportAudit(context.Background(), auth.ExportAuditRecord{
+			UserID:               userIDFromClaims(claims),
+			UserLogin:            userLoginFromClaims(claims),
+			ClientIP:             clientIP,
+			Source:               sourceLabel,
+			Mode:                 exportMode,
+			Format:               exportFormat,
+			Success:              auditSuccess,
+			ErrorText:            auditErrText,
+			DurationMs:           time.Since(exportStartedAt).Milliseconds(),
+			DealsTotal:           stats.DealsTotal,
+			TasksTotal:           stats.TasksTotal,
+			DealsWithSupport:     stats.DealsWithSupport,
+			SupportMeasuresTotal: stats.SupportMeasuresTotal,
+		})
+	}()
 
 	isFullExport := len(dealIDs) == 0
 	fullExportLocked := false
@@ -430,20 +491,24 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.LastError = ""
 	})
 
-	projects, sourceLabel, err := h.loadProjects(ctx, r, bClient, dealIDs)
+	projects, sourceLabelValue, err := h.loadProjects(ctx, r, bClient, dealIDs)
 	if err != nil {
 		if isCanceledErr(err) {
 			h.markStatusCanceledByUser()
+			auditErrText = "export canceled by user"
 			http.Error(w, "export canceled by user", http.StatusConflict)
 			return
 		}
 		h.markStatusError(err.Error())
+		auditErrText = err.Error()
 		log.WithError(err).WithField("deal_ids", dealIDs).Error("export load projects failed")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	sourceLabel = sourceLabelValue
 	if len(projects) == 0 && sourceLabel != "bitrix_api" {
 		h.markStatusError("no projects found")
+		auditErrText = "no projects found"
 		http.Error(w, "no projects found", http.StatusBadRequest)
 		return
 	}
@@ -463,7 +528,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	var (
 		tasks  []model.TaskRow
-		stats  service.ExportStats
 		issues []string
 	)
 	if isFullBitrixExport {
@@ -524,9 +588,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			if allErr != nil {
 				if isCanceledErr(allErr) {
 					h.markStatusCanceledByUser()
+					auditErrText = "export canceled by user"
 					http.Error(w, "export canceled by user", http.StatusConflict)
 					return
 				}
+				auditErrText = "failed to collect tasks: " + allErr.Error()
 				h.markStatusError("failed to collect tasks: " + allErr.Error())
 				if strings.Contains(allErr.Error(), "webhook auth failed") {
 					http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
@@ -559,9 +625,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 				if chunkErr != nil {
 					if isCanceledErr(chunkErr) {
 						h.markStatusCanceledByUser()
+						auditErrText = "export canceled by user"
 						http.Error(w, "export canceled by user", http.StatusConflict)
 						return
 					}
+					auditErrText = "failed to collect tasks: " + chunkErr.Error()
 					h.markStatusError("failed to collect tasks: " + chunkErr.Error())
 					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
 						http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
@@ -605,9 +673,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		if callErr != nil {
 			if isCanceledErr(callErr) {
 				h.markStatusCanceledByUser()
+				auditErrText = "export canceled by user"
 				http.Error(w, "export canceled by user", http.StatusConflict)
 				return
 			}
+			auditErrText = "failed to collect tasks: " + callErr.Error()
 			h.markStatusError("failed to collect tasks: " + callErr.Error())
 			if strings.Contains(callErr.Error(), "webhook auth failed") {
 				http.Error(w, "bitrix webhook is invalid or expired", http.StatusBadGateway)
@@ -649,6 +719,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 	}
 	if err != nil {
+		auditErrText = "failed to build export file: " + err.Error()
 		h.markStatusError("failed to build export file: " + err.Error())
 		http.Error(w, "failed to build export file: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -682,8 +753,11 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename)))
 	w.WriteHeader(http.StatusOK)
 	if _, writeErr := w.Write(result); writeErr != nil {
+		auditErrText = "export response write failed: " + writeErr.Error()
 		log.WithError(writeErr).Warn("export response write failed")
+		return
 	}
+	auditSuccess = true
 }
 
 func (h *Handler) tryStartFullExport() bool {
@@ -860,6 +934,66 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
 		log.WithError(err).Warn("download last export write failed")
+	}
+}
+
+func detectExportMode(r *http.Request, dealIDs []int) string {
+	if r != nil && r.MultipartForm != nil {
+		if files := r.MultipartForm.File["file"]; len(files) > 0 {
+			return "file"
+		}
+	}
+	if len(dealIDs) > 0 {
+		return "ids"
+	}
+	return "all"
+}
+
+func userIDFromClaims(claims *auth.Claims) int64 {
+	if claims == nil {
+		return 0
+	}
+	return claims.UserID
+}
+
+func userLoginFromClaims(claims *auth.Claims) string {
+	if claims == nil {
+		return ""
+	}
+	return strings.TrimSpace(claims.Login)
+}
+
+func clientIPFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (h *Handler) recordExportAudit(ctx context.Context, rec auth.ExportAuditRecord) {
+	if h == nil || h.auth == nil {
+		return
+	}
+	if strings.TrimSpace(rec.UserLogin) == "" {
+		rec.UserLogin = "api"
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := h.auth.RecordExportAudit(writeCtx, rec); err != nil {
+		log.WithError(err).Warn("failed to persist export audit")
 	}
 }
 
