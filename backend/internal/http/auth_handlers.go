@@ -131,11 +131,23 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.loginLimiter != nil && !h.loginLimiter.Allow(clientIPFromRequest(r)) {
-		writeAPIErrorSimple(w, http.StatusTooManyRequests, "LOGIN_RATE_LIMITED", "Слишком много попыток входа", "too many login attempts, try again later")
+		writeAPIErrorSimple(
+			w,
+			http.StatusTooManyRequests,
+			"LOGIN_RATE_LIMITED",
+			"Слишком много попыток входа",
+			"too many login attempts, try again later",
+		)
 		return
 	}
 	if h.auth == nil {
-		writeAPIErrorSimple(w, http.StatusServiceUnavailable, "AUTH_DISABLED", "Авторизация отключена на сервере", "auth is disabled")
+		writeAPIErrorSimple(
+			w,
+			http.StatusServiceUnavailable,
+			"AUTH_DISABLED",
+			"Авторизация отключена на сервере",
+			"auth is disabled",
+		)
 		return
 	}
 
@@ -146,30 +158,53 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	login := strings.TrimSpace(in.Login)
 	if login == "" || strings.TrimSpace(in.Password) == "" {
-		writeAPIErrorSimple(w, http.StatusBadRequest, "AUTH_REQUIRED_FIELDS", "Логин и пароль обязательны", "login and password are required")
+		writeAPIErrorSimple(
+			w,
+			http.StatusBadRequest,
+			"AUTH_REQUIRED_FIELDS",
+			"Логин и пароль обязательны",
+			"login and password are required",
+		)
 		return
 	}
 
 	user, err := h.auth.Authenticate(r.Context(), login, in.Password)
 	if err != nil {
-		writeAPIErrorSimple(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "Неверный логин или пароль", "invalid credentials")
+		writeAPIErrorSimple(
+			w,
+			http.StatusUnauthorized,
+			"INVALID_CREDENTIALS",
+			"Неверный логин или пароль",
+			"invalid credentials",
+		)
 		return
 	}
 	token, expiresAt, err := h.auth.IssueToken(user)
 	if err != nil {
-		writeAPIErrorSimple(w, http.StatusInternalServerError, "TOKEN_ISSUE_FAILED", "Не удалось создать сессию", "failed to issue token")
+		writeAPIErrorSimple(
+			w,
+			http.StatusInternalServerError,
+			"TOKEN_ISSUE_FAILED",
+			"Не удалось создать сессию",
+			"failed to issue token",
+		)
 		return
 	}
 	h.setSessionCookie(w, r, token, expiresAt)
 	w.Header().Set("Cache-Control", "no-store")
-	writeAPISuccess(w, http.StatusOK, "authorized", "Вход выполнен", model.AuthLoginData{
-		ExpiresAt: expiresAt.UTC().Format(time.RFC3339Nano),
-		Session:   "cookie",
-		User: model.APIUser{
-			ID:    user.ID,
-			Login: user.Login,
-		},
-	}, nil)
+	writeAPISuccess(
+		w,
+		http.StatusOK,
+		"authorized",
+		"Вход выполнен",
+		model.AuthLoginData{
+			ExpiresAt: expiresAt.UTC().Format(time.RFC3339Nano),
+			Session:   "cookie",
+			User: model.APIUser{
+				ID:    user.ID,
+				Login: user.Login,
+			},
+		}, nil)
 }
 
 // authMe godoc
@@ -188,20 +223,36 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.auth == nil {
-		writeAPISuccess(w, http.StatusOK, "authorized", "Сессия активна", map[string]any{
-			"user": model.APIUser{ID: 0, Login: "system"},
-		}, nil)
+		writeAPISuccess(
+			w,
+			http.StatusOK,
+			"authorized",
+			"Сессия активна",
+			map[string]any{
+				"user": model.APIUser{ID: 0, Login: "system"},
+			}, nil)
 		return
 	}
 	claims, ok := h.sessionClaimsFromRequest(r)
 	if !ok || claims == nil {
-		writeAPIErrorSimple(w, http.StatusUnauthorized, "AUTH_REQUIRED", "Сессия отсутствует или истекла", "unauthorized")
+		writeAPIErrorSimple(
+			w,
+			http.StatusUnauthorized,
+			"AUTH_REQUIRED",
+			"Сессия отсутствует или истекла",
+			"unauthorized",
+		)
 		return
 	}
-	writeAPISuccess(w, http.StatusOK, "authorized", "Сессия активна", model.AuthMeData{
-		User:      model.APIUser{ID: claims.UserID, Login: claims.Login},
-		ExpiresAt: claims.ExpiresAt.Time.UTC().Format(time.RFC3339Nano),
-	}, nil)
+	writeAPISuccess(
+		w,
+		http.StatusOK,
+		"authorized",
+		"Сессия активна",
+		model.AuthMeData{
+			User:      model.APIUser{ID: claims.UserID, Login: claims.Login},
+			ExpiresAt: claims.ExpiresAt.Time.UTC().Format(time.RFC3339Nano),
+		}, nil)
 }
 
 // authLogout godoc
@@ -219,7 +270,12 @@ func (h *Handler) authLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.clearSessionCookie(w, r)
-	writeAPISuccess(w, http.StatusOK, "logged_out", "Выход выполнен", model.LogoutData{LoggedOut: true}, nil)
+	writeAPISuccess(
+		w,
+		http.StatusOK,
+		"logged_out",
+		"Выход выполнен",
+		model.LogoutData{LoggedOut: true}, nil)
 }
 
 func userIDFromClaims(claims *auth.Claims) int64 {

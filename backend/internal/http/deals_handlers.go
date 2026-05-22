@@ -35,13 +35,23 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		writeAPIErrorSimple(w, http.StatusInternalServerError, "WEBHOOK_EMPTY", "Сервер не настроен: не указан webhook Bitrix24", "server is not configured: BITRIX_WEBHOOK_URL is empty")
+		writeAPIErrorSimple(
+			w,
+			http.StatusInternalServerError,
+			"WEBHOOK_EMPTY",
+			"Сервер не настроен: не указан webhook Bitrix24",
+			"server is not configured: BITRIX_WEBHOOK_URL is empty",
+		)
 		return
 	}
 
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		writeAPIErrorSimple(w, http.StatusBadRequest, "WEBHOOK_INVALID", "Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
+		writeAPIErrorSimple(
+			w,
+			http.StatusBadRequest,
+			"WEBHOOK_INVALID",
+			"Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
 		return
 	}
 
@@ -51,14 +61,23 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	deals, err := bClient.ListDealIDs(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal ids load failed")
-		writeAPIErrorSimple(w, http.StatusBadGateway, "DEAL_IDS_LOAD_FAILED", "Не удалось загрузить ID сделок", "failed to load deal ids: "+err.Error())
+		writeAPIErrorSimple(
+			w,
+			http.StatusBadGateway,
+			"DEAL_IDS_LOAD_FAILED",
+			"Не удалось загрузить ID сделок", "failed to load deal ids: "+err.Error())
 		return
 	}
 
-	writeAPISuccess(w, http.StatusOK, "deal_ids_loaded", "Список ID сделок загружен", map[string]any{
-		"count": len(deals),
-		"deals": deals,
-	}, nil)
+	writeAPISuccess(
+		w,
+		http.StatusOK,
+		"deal_ids_loaded",
+		"Список ID сделок загружен",
+		map[string]any{
+			"count": len(deals),
+			"deals": deals,
+		}, nil)
 }
 
 // dealFields godoc
@@ -80,12 +99,22 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	}
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		writeAPIErrorSimple(w, http.StatusInternalServerError, "WEBHOOK_EMPTY", "Сервер не настроен: не указан webhook Bitrix24", "server is not configured: BITRIX_WEBHOOK_URL is empty")
+		writeAPIErrorSimple(
+			w,
+			http.StatusInternalServerError,
+			"WEBHOOK_EMPTY",
+			"Сервер не настроен: не указан webhook Bitrix24",
+			"server is not configured: BITRIX_WEBHOOK_URL is empty")
 		return
 	}
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		writeAPIErrorSimple(w, http.StatusBadRequest, "WEBHOOK_INVALID", "Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
+		writeAPIErrorSimple(
+			w,
+			http.StatusBadRequest,
+			"WEBHOOK_INVALID",
+			"Некорректный webhook Bitrix24",
+			"invalid webhook: "+err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -93,13 +122,23 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	fields, err := bClient.ListDealFields(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal fields load failed")
-		writeAPIErrorSimple(w, http.StatusBadGateway, "DEAL_FIELDS_LOAD_FAILED", "Не удалось загрузить поля сделок", "failed to load deal fields: "+err.Error())
+		writeAPIErrorSimple(
+			w,
+			http.StatusBadGateway,
+			"DEAL_FIELDS_LOAD_FAILED",
+			"Не удалось загрузить поля сделок",
+			"failed to load deal fields: "+err.Error())
 		return
 	}
-	writeAPISuccess(w, http.StatusOK, "deal_fields_loaded", "Поля сделок загружены", map[string]any{
-		"count":  len(fields),
-		"fields": fields,
-	}, nil)
+	writeAPISuccess(
+		w,
+		http.StatusOK,
+		"deal_fields_loaded",
+		"Поля сделок загружены",
+		map[string]any{
+			"count":  len(fields),
+			"fields": fields,
+		}, nil)
 }
 
 func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]model.ProjectRow, string, error) {

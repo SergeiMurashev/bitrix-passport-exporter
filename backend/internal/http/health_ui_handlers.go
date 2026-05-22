@@ -33,7 +33,11 @@ func (h *Handler) readyz(w http.ResponseWriter, _ *http.Request) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := h.auth.Ready(ctx); err != nil {
-			http.Error(w, "not ready: auth db unavailable", http.StatusServiceUnavailable)
+			http.Error(
+				w,
+				"not ready: auth db unavailable",
+				http.StatusServiceUnavailable,
+			)
 			return
 		}
 	}
@@ -51,7 +55,12 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	indexPath := filepath.Join(frontendDistDir(), "index.html")
 	body, err := os.ReadFile(indexPath)
 	if err != nil {
-		writeAPIErrorSimple(w, http.StatusServiceUnavailable, "FRONTEND_NOT_BUILT", "Фронтенд не собран", "frontend is not built; run frontend build")
+		writeAPIErrorSimple(w,
+			http.StatusServiceUnavailable,
+			"FRONTEND_NOT_BUILT",
+			"Фронтенд не собран",
+			"frontend is not built; run frontend build",
+		)
 		return
 	}
 	if token := strings.TrimSpace(h.cfg.APIAccessToken); token != "" {
