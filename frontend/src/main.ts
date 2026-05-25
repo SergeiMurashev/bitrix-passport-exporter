@@ -425,7 +425,8 @@ loginForm.addEventListener('submit', (e) => {
       const ok = await checkAuth()
       if (ok) {
         authPasswordEl.value = ''
-        setStatus('Авторизация успешна.', 'ok')
+        setStatus('', 'muted')
+        setStatusLines([])
         startStatusPolling()
         await refreshExportStatus()
       }
