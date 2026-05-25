@@ -281,6 +281,11 @@ func isValidXMLRune(r rune) bool {
 	return r >= 0x10000 && r <= 0x10FFFF
 }
 
+/*
+Типы в XML для DOCX (Content_Types, Relationships)
+
+	-минимальный набор для корректного открытия документа в Word.
+*/
 func contentTypesXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
@@ -290,6 +295,11 @@ func contentTypesXML() string {
 		`</Types>`
 }
 
+/*
+Relationships для DOCX - минимальный набор для корректного открытия документа в Word.
+
+	В данном случае, единственное отношение - это связь между корневым пакетом и основным документом (document.xml).
+*/
 func packageRelsXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
@@ -297,6 +307,11 @@ func packageRelsXML() string {
 		`</Relationships>`
 }
 
+/*
+Relationships для документа (document.xml) - в данном случае, у нас нет внешних ресурсов (картинок, стилей и т.д.),
+
+	поэтому он пустой, но его наличие обязательно для корректного открытия документа в Word.
+*/
 func documentRelsXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`

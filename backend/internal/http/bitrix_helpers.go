@@ -12,25 +12,13 @@ import (
 func (h *Handler) newBitrixClientFromConfig(w http.ResponseWriter) (*bitrix.Client, bool) {
 	webhook := strings.TrimSpace(h.cfg.Webhook)
 	if webhook == "" {
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"WEBHOOK_EMPTY",
-			"Сервер не настроен: не указан webhook Bitrix24",
-			"server is not configured: BITRIX_WEBHOOK_URL is empty",
-		)
+		writeMappedError(w, errWebhookEmpty, "server is not configured: BITRIX_WEBHOOK_URL is empty")
 		return nil, false
 	}
 
 	bClient, err := bitrix.NewFromWebhook(webhook)
 	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"WEBHOOK_INVALID",
-			"Некорректный webhook Bitrix24",
-			"invalid webhook: "+err.Error(),
-		)
+		writeMappedError(w, errWebhookInvalid, "invalid webhook: "+err.Error())
 		return nil, false
 	}
 

@@ -6,12 +6,12 @@ type APIError struct {
 }
 
 type APIErrorResponse struct {
-	OK      bool           `json:"ok" example:"false"`
-	Status  string         `json:"status" example:"unauthorized"`
-	Message string         `json:"message" example:"Требуется авторизация"`
-	Error   APIError       `json:"error"`
-	Meta    map[string]any `json:"meta,omitempty"`
-	Data    map[string]any `json:"data,omitempty"`
+	OK      bool          `json:"ok" example:"false"`
+	Status  string        `json:"status" example:"unauthorized"`
+	Message string        `json:"message" example:"Требуется авторизация"`
+	Error   APIError      `json:"error"`
+	Meta    *ResponseMeta `json:"meta,omitempty"`
+	Data    struct{}      `json:"data,omitempty"`
 }
 
 type APIUser struct {
@@ -116,8 +116,8 @@ type CancelExportResponse struct {
 }
 
 type DealIDsData struct {
-	Count int `json:"count" example:"9854"`
-	Deals any `json:"deals"`
+	Count int         `json:"count" example:"9854"`
+	Deals []DealShort `json:"deals"`
 }
 
 type DealIDsResponse struct {
@@ -128,8 +128,8 @@ type DealIDsResponse struct {
 }
 
 type DealFieldsData struct {
-	Count  int `json:"count" example:"120"`
-	Fields any `json:"fields"`
+	Count  int         `json:"count" example:"120"`
+	Fields []DealField `json:"fields"`
 }
 
 type DealFieldsResponse struct {

@@ -131,23 +131,11 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.loginLimiter != nil && !h.loginLimiter.Allow(clientIPFromRequest(r)) {
-		writeAPIErrorSimple(
-			w,
-			http.StatusTooManyRequests,
-			"LOGIN_RATE_LIMITED",
-			"Слишком много попыток входа",
-			"too many login attempts, try again later",
-		)
+		writeMappedError(w, errLoginRateLimited, "too many login attempts, try again later")
 		return
 	}
 	if h.auth == nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusServiceUnavailable,
-			"AUTH_DISABLED",
-			"Авторизация отключена на сервере",
-			"auth is disabled",
-		)
+		writeMappedError(w, errAuthDisabled, "auth is disabled")
 		return
 	}
 
@@ -158,36 +146,18 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	login := strings.TrimSpace(in.Login)
 	if login == "" || strings.TrimSpace(in.Password) == "" {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"AUTH_REQUIRED_FIELDS",
-			"Логин и пароль обязательны",
-			"login and password are required",
-		)
+		writeMappedError(w, errAuthRequiredFields, "login and password are required")
 		return
 	}
 
 	user, err := h.auth.Authenticate(r.Context(), login, in.Password)
 	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusUnauthorized,
-			"INVALID_CREDENTIALS",
-			"Неверный логин или пароль",
-			"invalid credentials",
-		)
+		writeMappedError(w, errInvalidCredentials, "invalid credentials")
 		return
 	}
 	token, expiresAt, err := h.auth.IssueToken(user)
 	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"TOKEN_ISSUE_FAILED",
-			"Не удалось создать сессию",
-			"failed to issue token",
-		)
+		writeMappedError(w, errTokenIssueFailed, "failed to issue token")
 		return
 	}
 	h.setSessionCookie(w, r, token, expiresAt)
@@ -237,13 +207,7 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, ok := h.sessionClaimsFromRequest(r)
 	if !ok || claims == nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusUnauthorized,
-			"AUTH_REQUIRED",
-			"Сессия отсутствует или истекла",
-			"unauthorized",
-		)
+		writeMappedError(w, errSessionRequired, "unauthorized")
 		return
 	}
 	writeAPISuccess(

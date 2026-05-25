@@ -27,63 +27,33 @@ func (h *Handler) parseExportRequest(w http.ResponseWriter, r *http.Request) (ex
 	}
 
 	if h.exportLimiter != nil && !h.exportLimiter.Allow(req.clientIP) {
-		writeAPIErrorSimple(
-			w,
-			http.StatusTooManyRequests,
-			"EXPORT_RATE_LIMITED",
-			"Слишком много запросов на выгрузку",
-			"too many export requests, try again later",
-		)
+		writeMappedError(w, errExportRateLimited, "too many export requests, try again later")
 		return req, false
 	}
 
 	reqContentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	if strings.Contains(reqContentType, "multipart/form-data") {
 		if err := r.ParseMultipartForm(64 << 20); err != nil {
-			writeAPIErrorSimple(
-				w,
-				http.StatusBadRequest,
-				"INVALID_MULTIPART_FORM",
-				"Некорректная multipart-форма",
-				"invalid multipart form: "+err.Error(),
-			)
+			writeMappedError(w, errInvalidMultipartForm, "invalid multipart form: "+err.Error())
 			return req, false
 		}
 	} else {
 		if err := r.ParseForm(); err != nil {
-			writeAPIErrorSimple(
-				w,
-				http.StatusBadRequest,
-				"INVALID_FORM",
-				"Некорректные параметры запроса",
-				"invalid form: "+err.Error(),
-			)
+			writeMappedError(w, errInvalidForm, "invalid form: "+err.Error())
 			return req, false
 		}
 	}
 
 	dealIDs, err := parseDealIDs(r.FormValue("deal_ids"), r.FormValue("deal_id"))
 	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"INVALID_DEAL_IDS",
-			"Некорректный список ID сделок",
-			err.Error(),
-		)
+		writeMappedError(w, errInvalidDealIDs, err.Error())
 		return req, false
 	}
 	req.dealIDs = dealIDs
 
 	exportFormat, err := parseExportFormat(r.FormValue("format"))
 	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"UNSUPPORTED_EXPORT_FORMAT",
-			"Неподдерживаемый формат выгрузки",
-			err.Error(),
-		)
+		writeMappedError(w, errUnsupportedExportFormat, err.Error())
 		return req, false
 	}
 	req.exportFormat = exportFormat
@@ -107,39 +77,19 @@ func (h *Handler) collectExportData(
 	projects, sourceLabel, err := h.loadProjects(ctx, r, bClient, req.dealIDs)
 	if err != nil {
 		if isCanceledErr(err) {
-			h.markStatusCanceledByUser()
-			*auditErrText = "export canceled by user"
-			writeAPIErrorSimple(
-				w,
-				http.StatusConflict,
-				"EXPORT_CANCELED",
-				"Выгрузка отменена пользователем",
-				"export canceled by user",
-			)
+			h.respondExportCanceled(w, auditErrText)
 			return nil, nil, nil, service.ExportStats{}, "", false
 		}
 		h.markStatusError(err.Error())
 		*auditErrText = err.Error()
 		log.WithError(err).Error("export load projects failed")
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"PROJECTS_LOAD_FAILED",
-			"Не удалось загрузить сделки",
-			err.Error(),
-		)
+		writeMappedError(w, errProjectsLoadFailed, err.Error())
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
 	if len(projects) == 0 && sourceLabel != "bitrix_api" {
 		h.markStatusError("no projects found")
 		*auditErrText = "no projects found"
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"NO_PROJECTS_FOUND",
-			"Сделки не найдены",
-			"no projects found",
-		)
+		writeMappedError(w, errNoProjectsFound, "no projects found")
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
 
@@ -158,33 +108,22 @@ func (h *Handler) collectExportData(
 		start := 0
 		processed := 0
 		var allProjects []models.ProjectRow
+
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
 				if isCanceledErr(pageErr) {
-					h.markStatusCanceledByUser()
-					writeAPIErrorSimple(
-						w,
-						http.StatusConflict,
-						"EXPORT_CANCELED",
-						"Выгрузка отменена пользователем",
-						"export canceled by user",
-					)
+					h.respondExportCanceled(w, nil)
 					return nil, nil, nil, service.ExportStats{}, "", false
 				}
 				h.markStatusError("failed to load deals page: " + pageErr.Error())
-				writeAPIErrorSimple(
-					w,
-					http.StatusInternalServerError,
-					"DEALS_PAGE_LOAD_FAILED",
-					"Не удалось загрузить страницу сделок из Bitrix24",
-					"failed to load deals page: "+pageErr.Error(),
-				)
+				writeMappedError(w, errDealsPageLoadFailed, "failed to load deals page: "+pageErr.Error())
 				return nil, nil, nil, service.ExportStats{}, "", false
 			}
 			if len(page.Rows) == 0 {
 				break
 			}
+
 			allProjects = append(allProjects, page.Rows...)
 			processed += len(page.Rows)
 			pageDealsWithSupport, pageSupportMeasures := collectSupportStats(page.Rows)
@@ -194,11 +133,13 @@ func (h *Handler) collectExportData(
 				s.DealsWithSupport += pageDealsWithSupport
 				s.SupportMeasuresTotal += pageSupportMeasures
 			})
+
 			if page.Next == 0 || page.Next <= start {
 				break
 			}
 			start = page.Next
 		}
+
 		h.setStatus(func(s *exportStatus) {
 			s.Phase = "tasks"
 			s.DealsTotal = len(allProjects)
@@ -207,37 +148,7 @@ func (h *Handler) collectExportData(
 		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
 			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, req.projectField, allowTitleFallback)
 			if allErr != nil {
-				if isCanceledErr(allErr) {
-					h.markStatusCanceledByUser()
-					*auditErrText = "export canceled by user"
-					writeAPIErrorSimple(
-						w,
-						http.StatusConflict,
-						"EXPORT_CANCELED",
-						"Выгрузка отменена пользователем",
-						"export canceled by user",
-					)
-					return nil, nil, nil, service.ExportStats{}, "", false
-				}
-				*auditErrText = "failed to collect tasks: " + allErr.Error()
-				h.markStatusError("failed to collect tasks: " + allErr.Error())
-				if strings.Contains(allErr.Error(), "webhook auth failed") {
-					writeAPIErrorSimple(
-						w,
-						http.StatusBadGateway,
-						"WEBHOOK_AUTH_FAILED",
-						"Webhook Bitrix24 недействителен или истек",
-						"bitrix webhook is invalid or expired",
-					)
-					return nil, nil, nil, service.ExportStats{}, "", false
-				}
-				writeAPIErrorSimple(
-					w,
-					http.StatusInternalServerError,
-					"TASKS_COLLECT_FAILED",
-					"Не удалось собрать задачи по сделкам",
-					"failed to collect tasks: "+allErr.Error(),
-				)
+				h.handleTasksCollectError(w, allErr, auditErrText)
 				return nil, nil, nil, service.ExportStats{}, "", false
 			}
 			tasks = allTasks
@@ -257,37 +168,7 @@ func (h *Handler) collectExportData(
 				chunk := allProjects[i:end]
 				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, req.projectField, allowTitleFallback)
 				if chunkErr != nil {
-					if isCanceledErr(chunkErr) {
-						h.markStatusCanceledByUser()
-						*auditErrText = "export canceled by user"
-						writeAPIErrorSimple(
-							w,
-							http.StatusConflict,
-							"EXPORT_CANCELED",
-							"Выгрузка отменена пользователем",
-							"export canceled by user",
-						)
-						return nil, nil, nil, service.ExportStats{}, "", false
-					}
-					*auditErrText = "failed to collect tasks: " + chunkErr.Error()
-					h.markStatusError("failed to collect tasks: " + chunkErr.Error())
-					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
-						writeAPIErrorSimple(
-							w,
-							http.StatusBadGateway,
-							"WEBHOOK_AUTH_FAILED",
-							"Webhook Bitrix24 недействителен или истек",
-							"bitrix webhook is invalid or expired",
-						)
-						return nil, nil, nil, service.ExportStats{}, "", false
-					}
-					writeAPIErrorSimple(
-						w,
-						http.StatusInternalServerError,
-						"TASKS_COLLECT_FAILED",
-						"Не удалось собрать задачи по сделкам",
-						"failed to collect tasks: "+chunkErr.Error(),
-					)
+					h.handleTasksCollectError(w, chunkErr, auditErrText)
 					return nil, nil, nil, service.ExportStats{}, "", false
 				}
 				tasks = append(tasks, chunkTasks...)
@@ -311,40 +192,11 @@ func (h *Handler) collectExportData(
 			s.DealsWithSupport = supportDeals
 			s.SupportMeasuresTotal = supportMeasures
 		})
+
 		var callErr error
 		tasks, stats, issues, callErr = svc.BuildTasks(ctx, projects, req.projectField, allowTitleFallback)
 		if callErr != nil {
-			if isCanceledErr(callErr) {
-				h.markStatusCanceledByUser()
-				*auditErrText = "export canceled by user"
-				writeAPIErrorSimple(
-					w,
-					http.StatusConflict,
-					"EXPORT_CANCELED",
-					"Выгрузка отменена пользователем",
-					"export canceled by user",
-				)
-				return nil, nil, nil, service.ExportStats{}, "", false
-			}
-			*auditErrText = "failed to collect tasks: " + callErr.Error()
-			h.markStatusError("failed to collect tasks: " + callErr.Error())
-			if strings.Contains(callErr.Error(), "webhook auth failed") {
-				writeAPIErrorSimple(
-					w,
-					http.StatusBadGateway,
-					"WEBHOOK_AUTH_FAILED",
-					"Webhook Bitrix24 недействителен или истек",
-					"bitrix webhook is invalid or expired",
-				)
-				return nil, nil, nil, service.ExportStats{}, "", false
-			}
-			writeAPIErrorSimple(
-				w,
-				http.StatusInternalServerError,
-				"TASKS_COLLECT_FAILED",
-				"Не удалось собрать задачи по сделкам",
-				"failed to collect tasks: "+callErr.Error(),
-			)
+			h.handleTasksCollectError(w, callErr, auditErrText)
 			return nil, nil, nil, service.ExportStats{}, "", false
 		}
 	}
@@ -379,16 +231,40 @@ func (h *Handler) buildExportBinary(
 	if err != nil {
 		*auditErrText = "failed to build export file: " + err.Error()
 		h.markStatusError("failed to build export file: " + err.Error())
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"EXPORT_BUILD_FAILED",
-			"Не удалось сформировать файл выгрузки",
-			"failed to build export file: "+err.Error(),
-		)
+		writeMappedError(w, errExportBuildFailed, "failed to build export file: "+err.Error())
 		return nil, "", false
 	}
 	return result, contentType, true
+}
+
+func (h *Handler) respondExportCanceled(w http.ResponseWriter, auditErrText *string) {
+	h.markStatusCanceledByUser()
+	if auditErrText != nil {
+		*auditErrText = "export canceled by user"
+	}
+	writeMappedError(w, errExportCanceled, "export canceled by user")
+}
+
+func (h *Handler) handleTasksCollectError(w http.ResponseWriter, err error, auditErrText *string) {
+	if err == nil {
+		return
+	}
+	if isCanceledErr(err) {
+		h.respondExportCanceled(w, auditErrText)
+		return
+	}
+
+	detail := "failed to collect tasks: " + err.Error()
+	if auditErrText != nil {
+		*auditErrText = detail
+	}
+	h.markStatusError(detail)
+	if strings.Contains(err.Error(), "webhook auth failed") {
+		writeMappedError(w, errWebhookAuthFailed, "bitrix webhook is invalid or expired")
+		return
+	}
+
+	writeMappedError(w, errTasksCollectFailed, detail)
 }
 
 func (h *Handler) completeExportSuccess(

@@ -82,13 +82,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	fullExportLocked := false
 	if isFullExport {
 		if !h.tryStartFullExport() {
-			writeAPIErrorSimple(
-				w,
-				http.StatusTooManyRequests,
-				"EXPORT_ALREADY_RUNNING",
-				"Полная выгрузка уже выполняется",
-				"full export is already running; please wait and retry",
-			)
+			writeMappedError(w, errExportAlreadyRunning, "full export is already running; please wait and retry")
 			return
 		}
 		fullExportLocked = true
@@ -255,15 +249,16 @@ func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	status := h.status
 	h.mu.Unlock()
+
+	meta := models.ResponseMeta{GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	writeAPISuccess(
 		w,
 		http.StatusOK,
 		"export_status",
 		"Текущий статус выгрузки",
-		status,
-		map[string]any{
-			"generated_at": time.Now().UTC(),
-		})
+		mapExportStatusToDTO(status),
+		meta,
+	)
 }
 
 // cancelExport godoc
@@ -286,13 +281,7 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	cancel := h.fullExportCancel
 	if !h.status.Running || cancel == nil {
 		h.mu.Unlock()
-		writeAPIErrorSimple(
-			w,
-			http.StatusConflict,
-			"NO_EXPORT_RUNNING",
-			"Нет активной выгрузки для отмены",
-			"no export is running",
-		)
+		writeMappedError(w, errNoExportRunning, "no export is running")
 		return
 	}
 	alreadyRequested := h.cancelRequestedByUser
@@ -348,13 +337,7 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	contentType := strings.TrimSpace(h.lastContentType)
 	h.mu.Unlock()
 	if path == "" {
-		writeAPIErrorSimple(
-			w,
-			http.StatusNotFound,
-			"EXPORT_FILE_NOT_FOUND",
-			"Готовый файл выгрузки не найден",
-			"no ready export file",
-		)
+		writeMappedError(w, errExportFileNotFound, "no ready export file")
 		return
 	}
 	if strings.TrimSpace(filename) == "" {
@@ -369,13 +352,7 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusNotFound,
-			"EXPORT_FILE_NOT_FOUND",
-			"Готовый файл выгрузки не найден",
-			"no ready export file",
-		)
+		writeMappedError(w, errExportFileNotFound, "no ready export file")
 		return
 	}
 	defer f.Close()
@@ -429,4 +406,30 @@ func mergeExportStats(a, b service.ExportStats) service.ExportStats {
 	a.TasksTotal += b.TasksTotal
 	a.TaskLoadErrors += b.TaskLoadErrors
 	return a
+}
+
+func mapExportStatusToDTO(s exportStatus) models.ExportStatusData {
+	return models.ExportStatusData{
+		Running:              s.Running,
+		CanCancel:            s.CanCancel,
+		CancelRequested:      s.CancelRequested,
+		Phase:                s.Phase,
+		DealsProcessed:       s.DealsProcessed,
+		DealsTotal:           s.DealsTotal,
+		TasksTotal:           s.TasksTotal,
+		DealsWithSupport:     s.DealsWithSupport,
+		SupportMeasuresTotal: s.SupportMeasuresTotal,
+		HasLastResult:        s.HasLastResult,
+		LastFileName:         s.LastFileName,
+		StartedAt:            formatTimeUTC(s.StartedAt),
+		FinishedAt:           formatTimeUTC(s.FinishedAt),
+		LastError:            s.LastError,
+	}
+}
+
+func formatTimeUTC(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }

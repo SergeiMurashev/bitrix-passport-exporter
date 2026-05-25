@@ -24,7 +24,7 @@ type apiResponse struct {
 	Message string           `json:"message,omitempty"`
 	Data    any              `json:"data,omitempty"`
 	Error   *apiErrorPayload `json:"error,omitempty"`
-	Meta    map[string]any   `json:"meta,omitempty"`
+	Meta    any              `json:"meta,omitempty"`
 }
 
 var (
@@ -54,7 +54,7 @@ func writeAPIResponse(w http.ResponseWriter, httpCode int, body apiResponse) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func writeAPISuccess(w http.ResponseWriter, httpCode int, status, message string, data any, meta map[string]any) {
+func writeAPISuccess(w http.ResponseWriter, httpCode int, status, message string, data any, meta any) {
 	if strings.TrimSpace(status) == "" {
 		status = "success"
 	}
@@ -67,7 +67,7 @@ func writeAPISuccess(w http.ResponseWriter, httpCode int, status, message string
 	})
 }
 
-func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, detail string, meta map[string]any) {
+func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, detail string, meta any) {
 	if strings.TrimSpace(status) == "" {
 		status = "error"
 	}
@@ -83,34 +83,7 @@ func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, d
 	})
 }
 
-func statusFromHTTPCode(httpCode int) string {
-	switch {
-	case httpCode >= 500:
-		return "internal_error"
-	case httpCode == http.StatusUnauthorized:
-		return "unauthorized"
-	case httpCode == http.StatusForbidden:
-		return "forbidden"
-	case httpCode == http.StatusTooManyRequests:
-		return "rate_limited"
-	case httpCode == http.StatusNotFound:
-		return "not_found"
-	case httpCode == http.StatusConflict:
-		return "conflict"
-	case httpCode == http.StatusMethodNotAllowed:
-		return "method_not_allowed"
-	case httpCode >= 400:
-		return "bad_request"
-	default:
-		return "success"
-	}
-}
-
-func writeAPIErrorSimple(w http.ResponseWriter, httpCode int, code, message, detail string) {
-	writeAPIError(w, httpCode, statusFromHTTPCode(httpCode), message, code, detail, nil)
-}
-
-func writeAPIErrorDef(w http.ResponseWriter, def apiErrorDef, detail string, meta map[string]any) {
+func writeAPIErrorDef(w http.ResponseWriter, def apiErrorDef, detail string, meta any) {
 	writeAPIError(
 		w,
 		def.HTTPCode,

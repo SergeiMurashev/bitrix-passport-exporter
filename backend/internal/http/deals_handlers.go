@@ -44,11 +44,7 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	deals, err := bClient.ListDealIDs(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal ids load failed")
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadGateway,
-			"DEAL_IDS_LOAD_FAILED",
-			"Не удалось загрузить ID сделок", "failed to load deal ids: "+err.Error())
+		writeMappedError(w, errDealIDsLoadFailed, "failed to load deal ids: "+err.Error())
 		return
 	}
 
@@ -59,7 +55,7 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 		"Список ID сделок загружен",
 		models.DealIDsData{
 			Count: len(deals),
-			Deals: deals,
+			Deals: mapDealShorts(deals),
 		},
 		nil,
 	)
@@ -91,12 +87,7 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	fields, err := bClient.ListDealFields(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal fields load failed")
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadGateway,
-			"DEAL_FIELDS_LOAD_FAILED",
-			"Не удалось загрузить поля сделок",
-			"failed to load deal fields: "+err.Error())
+		writeMappedError(w, errDealFieldsLoadFailed, "failed to load deal fields: "+err.Error())
 		return
 	}
 	writeAPISuccess(
@@ -104,9 +95,32 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"deal_fields_loaded",
 		"Поля сделок загружены",
-		models.DealFieldsData{Count: len(fields), Fields: fields},
+		models.DealFieldsData{Count: len(fields), Fields: mapDealFields(fields)},
 		nil,
 	)
+}
+
+func mapDealShorts(items []bitrix.DealShort) []models.DealShort {
+	out := make([]models.DealShort, 0, len(items))
+	for _, item := range items {
+		out = append(out, models.DealShort{
+			ID:    item.ID,
+			Title: item.Title,
+		})
+	}
+	return out
+}
+
+func mapDealFields(items []bitrix.DealField) []models.DealField {
+	out := make([]models.DealField, 0, len(items))
+	for _, item := range items {
+		out = append(out, models.DealField{
+			Code:  item.Code,
+			Title: item.Title,
+			Type:  item.Type,
+		})
+	}
+	return out
 }
 
 func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]models.ProjectRow, string, error) {
