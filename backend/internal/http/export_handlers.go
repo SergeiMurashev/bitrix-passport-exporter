@@ -9,12 +9,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/export"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/service"
 	log "github.com/sirupsen/logrus"
@@ -44,71 +42,14 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	clientIP := clientIPFromRequest(r)
-	if h.exportLimiter != nil && !h.exportLimiter.Allow(clientIP) {
-		writeAPIErrorSimple(
-			w,
-			http.StatusTooManyRequests,
-			"EXPORT_RATE_LIMITED",
-			"Слишком много запросов на выгрузку",
-			"too many export requests, try again later",
-		)
-		return
-	}
-	reqContentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
-	if strings.Contains(reqContentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(64 << 20); err != nil {
-			writeAPIErrorSimple(
-				w,
-				http.StatusBadRequest,
-				"INVALID_MULTIPART_FORM",
-				"Некорректная multipart-форма",
-				"invalid multipart form: "+err.Error())
-			return
-		}
-	} else {
-		if err := r.ParseForm(); err != nil {
-			writeAPIErrorSimple(
-				w,
-				http.StatusBadRequest,
-				"INVALID_FORM",
-				"Некорректные параметры запроса",
-				"invalid form: "+err.Error())
-			return
-		}
-	}
-
-	projectField := projectFieldCode
-
-	bClient, ok := h.newBitrixClientFromConfig(w)
+	req, ok := h.parseExportRequest(w, r)
 	if !ok {
 		return
 	}
-	bClient.ConfigureSupportMapping(h.cfg.SupportLinkDealField, h.cfg.SupportMeasureValueField)
 
-	dealIDs, err := parseDealIDs(r.FormValue("deal_ids"), r.FormValue("deal_id"))
-	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"INVALID_DEAL_IDS",
-			"Некорректный список ID сделок",
-			err.Error())
-		return
-	}
-	exportFormat, err := parseExportFormat(r.FormValue("format"))
-	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"UNSUPPORTED_EXPORT_FORMAT",
-			"Неподдерживаемый формат выгрузки",
-			err.Error())
-		return
-	}
 	exportStartedAt := time.Now()
 	claims, _ := h.sessionClaimsFromRequest(r)
-	exportMode := detectExportMode(r, dealIDs)
+	exportMode := detectExportMode(r, req.dealIDs)
 	sourceLabel := "unknown"
 	auditSuccess := false
 	auditErrText := ""
@@ -123,10 +64,10 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		h.recordExportAudit(context.Background(), auth.ExportAuditRecord{
 			UserID:               userIDFromClaims(claims),
 			UserLogin:            userLoginFromClaims(claims),
-			ClientIP:             clientIP,
+			ClientIP:             req.clientIP,
 			Source:               sourceLabel,
 			Mode:                 exportMode,
-			Format:               exportFormat,
+			Format:               req.exportFormat,
 			Success:              auditSuccess,
 			ErrorText:            auditErrText,
 			DurationMs:           time.Since(exportStartedAt).Milliseconds(),
@@ -137,7 +78,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	isFullExport := len(dealIDs) == 0
+	isFullExport := len(req.dealIDs) == 0
 	fullExportLocked := false
 	if isFullExport {
 		if !h.tryStartFullExport() {
@@ -182,329 +123,26 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.LastError = ""
 	})
 
-	projects, sourceLabelValue, err := h.loadProjects(ctx, r, bClient, dealIDs)
-	if err != nil {
-		if isCanceledErr(err) {
-			h.markStatusCanceledByUser()
-			auditErrText = "export canceled by user"
-			writeAPIErrorSimple(
-				w,
-				http.StatusConflict,
-				"EXPORT_CANCELED",
-				"Выгрузка отменена пользователем",
-				"export canceled by user",
-			)
-			return
-		}
-		h.markStatusError(err.Error())
-		auditErrText = err.Error()
-		log.WithError(err).Error("export load projects failed")
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"PROJECTS_LOAD_FAILED",
-			"Не удалось загрузить сделки",
-			err.Error())
+	projects, tasks, issues, computedStats, loadedSourceLabel, ok := h.collectExportData(ctx, w, r, req, &auditErrText)
+	if !ok {
 		return
 	}
-	sourceLabel = sourceLabelValue
-	if len(projects) == 0 && sourceLabel != "bitrix_api" {
-		h.markStatusError("no projects found")
-		auditErrText = "no projects found"
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"NO_PROJECTS_FOUND",
-			"Сделки не найдены",
-			"no projects found",
-		)
-		return
-	}
-	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
-	isFullBitrixExport := sourceLabel == "bitrix_api"
-	allowTitleFallback := true
-	if isFullBitrixExport {
-		allowTitleFallback = false
-	}
-	var (
-		tasks  []models.TaskRow
-		issues []string
-	)
-	if isFullBitrixExport {
-		const pageSize = 200
-		start := 0
-		processed := 0
-		var allProjects []models.ProjectRow
-		for {
-			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
-			if pageErr != nil {
-				if isCanceledErr(pageErr) {
-					h.markStatusCanceledByUser()
-					writeAPIErrorSimple(
-						w,
-						http.StatusConflict,
-						"EXPORT_CANCELED",
-						"Выгрузка отменена пользователем",
-						"export canceled by user",
-					)
-					return
-				}
-				h.markStatusError("failed to load deals page: " + pageErr.Error())
-				writeAPIErrorSimple(
-					w,
-					http.StatusInternalServerError,
-					"DEALS_PAGE_LOAD_FAILED",
-					"Не удалось загрузить страницу сделок из Bitrix24",
-					"failed to load deals page: "+pageErr.Error())
-				return
-			}
-			if len(page.Rows) == 0 {
-				break
-			}
-			allProjects = append(allProjects, page.Rows...)
-			processed += len(page.Rows)
-			pageDealsWithSupport, pageSupportMeasures := collectSupportStats(page.Rows)
-			h.setStatus(func(s *exportStatus) {
-				s.Phase = "passport"
-				s.DealsProcessed = processed
-				s.DealsWithSupport += pageDealsWithSupport
-				s.SupportMeasuresTotal += pageSupportMeasures
-			})
-			if page.Next == 0 || page.Next <= start {
-				break
-			}
-			start = page.Next
-		}
-		h.setStatus(func(s *exportStatus) {
-			s.Phase = "tasks"
-			s.DealsTotal = len(allProjects)
-		})
-
-		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
-			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, projectField, allowTitleFallback)
-			if allErr != nil {
-				if isCanceledErr(allErr) {
-					h.markStatusCanceledByUser()
-					auditErrText = "export canceled by user"
-					writeAPIErrorSimple(
-						w,
-						http.StatusConflict,
-						"EXPORT_CANCELED",
-						"Выгрузка отменена пользователем",
-						"export canceled by user",
-					)
-					return
-				}
-				auditErrText = "failed to collect tasks: " + allErr.Error()
-				h.markStatusError("failed to collect tasks: " + allErr.Error())
-				if strings.Contains(allErr.Error(), "webhook auth failed") {
-					writeAPIErrorSimple(
-						w,
-						http.StatusBadGateway,
-						"WEBHOOK_AUTH_FAILED",
-						"Webhook Bitrix24 недействителен или истек",
-						"bitrix webhook is invalid or expired",
-					)
-					return
-				}
-				writeAPIErrorSimple(
-					w,
-					http.StatusInternalServerError,
-					"TASKS_COLLECT_FAILED",
-					"Не удалось собрать задачи по сделкам",
-					"failed to collect tasks: "+allErr.Error())
-				return
-			}
-			tasks = allTasks
-			issues = allIssues
-			stats = mergeExportStats(stats, allStats)
-			h.setStatus(func(s *exportStatus) {
-				s.Phase = "tasks"
-				s.DealsProcessed = len(allProjects)
-				s.TasksTotal = len(tasks)
-			})
-		} else {
-			for i := 0; i < len(allProjects); i += pageSize {
-				end := i + pageSize
-				if end > len(allProjects) {
-					end = len(allProjects)
-				}
-				chunk := allProjects[i:end]
-				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, projectField, allowTitleFallback)
-				if chunkErr != nil {
-					if isCanceledErr(chunkErr) {
-						h.markStatusCanceledByUser()
-						auditErrText = "export canceled by user"
-						writeAPIErrorSimple(
-							w,
-							http.StatusConflict,
-							"EXPORT_CANCELED",
-							"Выгрузка отменена пользователем",
-							"export canceled by user",
-						)
-						return
-					}
-					auditErrText = "failed to collect tasks: " + chunkErr.Error()
-					h.markStatusError("failed to collect tasks: " + chunkErr.Error())
-					if strings.Contains(chunkErr.Error(), "webhook auth failed") {
-						writeAPIErrorSimple(
-							w,
-							http.StatusBadGateway,
-							"WEBHOOK_AUTH_FAILED",
-							"Webhook Bitrix24 недействителен или истек",
-							"bitrix webhook is invalid or expired",
-						)
-						return
-					}
-					writeAPIErrorSimple(
-						w,
-						http.StatusInternalServerError,
-						"TASKS_COLLECT_FAILED",
-						"Не удалось собрать задачи по сделкам",
-						"failed to collect tasks: "+chunkErr.Error())
-					return
-				}
-				tasks = append(tasks, chunkTasks...)
-				issues = append(issues, chunkIssues...)
-				stats = mergeExportStats(stats, chunkStats)
-				h.setStatus(func(s *exportStatus) {
-					s.Phase = "tasks"
-					s.DealsProcessed = end
-					s.TasksTotal = len(tasks)
-				})
-			}
-		}
-		for i := range allProjects {
-			allProjects[i].Seq = i + 1
-		}
-		projects = allProjects
-	} else {
-		supportDeals, supportMeasures := collectSupportStats(projects)
-		h.setStatus(func(s *exportStatus) {
-			s.DealsWithSupport = supportDeals
-			s.SupportMeasuresTotal = supportMeasures
-		})
-		var callErr error
-		tasks, stats, issues, callErr = svc.BuildTasks(ctx, projects, projectField, allowTitleFallback)
-		if callErr != nil {
-			if isCanceledErr(callErr) {
-				h.markStatusCanceledByUser()
-				auditErrText = "export canceled by user"
-				writeAPIErrorSimple(
-					w,
-					http.StatusConflict,
-					"EXPORT_CANCELED",
-					"Выгрузка отменена пользователем",
-					"export canceled by user",
-				)
-				return
-			}
-			auditErrText = "failed to collect tasks: " + callErr.Error()
-			h.markStatusError("failed to collect tasks: " + callErr.Error())
-			if strings.Contains(callErr.Error(), "webhook auth failed") {
-				writeAPIErrorSimple(
-					w,
-					http.StatusBadGateway,
-					"WEBHOOK_AUTH_FAILED",
-					"Webhook Bitrix24 недействителен или истек",
-					"bitrix webhook is invalid or expired",
-				)
-				return
-			}
-			writeAPIErrorSimple(
-				w,
-				http.StatusInternalServerError,
-				"TASKS_COLLECT_FAILED",
-				"Не удалось собрать задачи по сделкам",
-				"failed to collect tasks: "+callErr.Error())
-			return
-		}
-	}
-	supportDeals, supportMeasures := collectSupportStats(projects)
-	stats.DealsWithSupport = supportDeals
-	stats.SupportMeasuresTotal = supportMeasures
+	stats = computedStats
+	sourceLabel = loadedSourceLabel
 	for _, issue := range issues {
 		log.WithField("issue", issue).Debug("export issue")
 	}
 
-	var (
-		result      []byte
-		contentType string
-	)
-	switch exportFormat {
-	case "docx":
-		result, err = export.BuildResultDOCX(projects, tasks)
-		contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	default:
-		result, err = export.BuildResultXLSX(projects, tasks)
-		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	}
-	if err != nil {
-		auditErrText = "failed to build export file: " + err.Error()
-		h.markStatusError("failed to build export file: " + err.Error())
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"EXPORT_BUILD_FAILED",
-			"Не удалось сформировать файл выгрузки",
-			"failed to build export file: "+err.Error())
+	result, contentType, ok := h.buildExportBinary(w, req.exportFormat, projects, tasks, &auditErrText)
+	if !ok {
 		return
 	}
+
 	if fullExportLocked {
 		h.finishFullExport()
 		fullExportLocked = false
 	}
-	filename := buildDownloadFilename(sourceLabel, dealIDs, exportFormat)
-	h.storeLastResult(result, filename, contentType)
-	h.setStatus(func(s *exportStatus) {
-		s.Running = false
-		s.CanCancel = false
-		s.CancelRequested = false
-		s.Phase = "idle"
-		s.DealsWithSupport = stats.DealsWithSupport
-		s.SupportMeasuresTotal = stats.SupportMeasuresTotal
-		s.FinishedAt = time.Now().UTC()
-		s.LastError = ""
-	})
-	w.Header().Set("X-Export-Success", "true")
-	w.Header().Set("X-Export-Source", sourceLabel)
-	w.Header().Set("X-Export-Deals-Total", strconv.Itoa(stats.DealsTotal))
-	w.Header().Set("X-Export-Tasks-Total", strconv.Itoa(stats.TasksTotal))
-	w.Header().Set("X-Export-Deals-With-Support", strconv.Itoa(stats.DealsWithSupport))
-	w.Header().Set("X-Export-Support-Measures-Total", strconv.Itoa(stats.SupportMeasuresTotal))
-	w.Header().Set("X-Export-Issues-Count", strconv.Itoa(len(issues)))
-	w.Header().Set("X-Export-File-Name", filename)
-	writeAPISuccess(
-		w,
-		http.StatusOK,
-		"export_completed",
-		"Выгрузка завершена, файл готов к скачиванию",
-		models.ExportCompletedData{
-			FileName:    filename,
-			ContentType: contentType,
-			SizeBytes:   len(result),
-			DownloadURL: "/api/export/download-last",
-			Format:      exportFormat,
-			Source:      sourceLabel,
-			IssuesCount: len(issues),
-			Stats: models.ExportStatsData{
-				DealsTotal:           stats.DealsTotal,
-				TasksTotal:           stats.TasksTotal,
-				DealsWithSupport:     stats.DealsWithSupport,
-				SupportMeasuresTotal: stats.SupportMeasuresTotal,
-			},
-		}, nil)
-	log.WithFields(log.Fields{
-		"source":                 sourceLabel,
-		"format":                 exportFormat,
-		"duration_ms":            time.Since(exportStartedAt).Milliseconds(),
-		"deals_total":            stats.DealsTotal,
-		"tasks_total":            stats.TasksTotal,
-		"deals_with_support":     stats.DealsWithSupport,
-		"support_measures_total": stats.SupportMeasuresTotal,
-		"issues_count":           len(issues),
-		"file_name":              filename,
-	}).Info("export completed")
+	h.completeExportSuccess(w, req.dealIDs, req.exportFormat, sourceLabel, result, contentType, issues, stats, exportStartedAt)
 	auditSuccess = true
 }
 
