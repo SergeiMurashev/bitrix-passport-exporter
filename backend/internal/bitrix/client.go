@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 type Client struct {
@@ -41,7 +41,7 @@ type stageMeta struct {
 }
 
 type DealsPage struct {
-	Rows  []model.ProjectRow
+	Rows  []models.ProjectRow
 	Next  int
 	Total int
 }
@@ -141,7 +141,7 @@ func (c *Client) dealSelectFields(extra ...string) []string {
 	return out
 }
 
-func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, projectField string, allowTitleFallback bool) (int, string, error) {
+func (c *Client) ResolveProjectForDeal(ctx context.Context, p models.ProjectRow, projectField string, allowTitleFallback bool) (int, string, error) {
 	if p.ProjectID > 0 {
 		return p.ProjectID, "deal." + projectField, nil
 	}
@@ -178,7 +178,7 @@ func (c *Client) ResolveProjectForDeal(ctx context.Context, p model.ProjectRow, 
 	return toInt(fmt.Sprintf("%v", groups[0]["ID"])), "sonet_group.get(NAME)", nil
 }
 
-func (c *Client) GetDeals(ctx context.Context, dealID int) ([]model.ProjectRow, error) {
+func (c *Client) GetDeals(ctx context.Context, dealID int) ([]models.ProjectRow, error) {
 	if dealID > 0 {
 		return c.GetDealsByIDs(ctx, []int{dealID})
 	}
@@ -200,7 +200,7 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 		return DealsPage{}, err
 	}
 	items := toSliceMap(resp.Result)
-	rows := make([]model.ProjectRow, 0, len(items))
+	rows := make([]models.ProjectRow, 0, len(items))
 	for _, item := range items {
 		rows = append(rows, mapDealToProjectRow(item, enumLabels, stageLabels))
 	}
@@ -213,7 +213,7 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 	return DealsPage{Rows: rows, Next: next, Total: total}, nil
 }
 
-func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectRow, error) {
+func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]models.ProjectRow, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
 	stageLabels, _ := c.loadDealStageMeta(ctx)
 
@@ -228,7 +228,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 			return nil, nil
 		}
 
-		out := make([]model.ProjectRow, 0, len(cleanIDs))
+		out := make([]models.ProjectRow, 0, len(cleanIDs))
 		found := make(map[int]struct{}, len(cleanIDs))
 		const chunkSize = 50
 		for i := 0; i < len(cleanIDs); i += chunkSize {
@@ -253,7 +253,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 				return nil, err
 			}
 			items := toSliceMap(resp.Result)
-			localRows := make([]model.ProjectRow, 0, len(items))
+			localRows := make([]models.ProjectRow, 0, len(items))
 			for _, item := range items {
 				row := mapDealToProjectRow(item, enumLabels, stageLabels)
 				if row.DealID > 0 {
@@ -292,11 +292,11 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 				return nil, fmt.Errorf("deal_ids not found in crm.deal.list and identifier fields: %v", missing2)
 			}
 		}
-		byID := make(map[int]model.ProjectRow, len(out))
+		byID := make(map[int]models.ProjectRow, len(out))
 		for _, row := range out {
 			byID[row.DealID] = row
 		}
-		ordered := make([]model.ProjectRow, 0, len(cleanIDs))
+		ordered := make([]models.ProjectRow, 0, len(cleanIDs))
 		for _, id := range cleanIDs {
 			if row, ok := byID[id]; ok {
 				ordered = append(ordered, row)
@@ -311,7 +311,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 	start := 0
 	const maxPages = 10000
 	page := 0
-	var out []model.ProjectRow
+	var out []models.ProjectRow
 	for {
 		page++
 		if page > maxPages {
@@ -330,7 +330,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 		if len(items) == 0 {
 			break
 		}
-		localRows := make([]model.ProjectRow, 0, len(items))
+		localRows := make([]models.ProjectRow, 0, len(items))
 		for _, item := range items {
 			localRows = append(localRows, mapDealToProjectRow(item, enumLabels, stageLabels))
 		}
@@ -350,7 +350,7 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]model.ProjectR
 	return out, nil
 }
 
-func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []int) ([]model.ProjectRow, map[int]struct{}, error) {
+func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []int) ([]models.ProjectRow, map[int]struct{}, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
 	stageLabels, _ := c.loadDealStageMeta(ctx)
 	fields, err := c.ListDealFields(ctx)
@@ -378,7 +378,7 @@ func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []
 		vals = append(vals, strconv.Itoa(id))
 	}
 
-	rows := make([]model.ProjectRow, 0, len(identifiers))
+	rows := make([]models.ProjectRow, 0, len(identifiers))
 	foundIdentifiers := make(map[int]struct{}, len(identifiers))
 	seenDeal := make(map[int]struct{}, len(identifiers))
 
@@ -819,7 +819,7 @@ func anyMapGet(m map[string]any, keys ...string) any {
 	return nil
 }
 
-func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]string, stageLabels map[string]stageMeta) model.ProjectRow {
+func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]string, stageLabels map[string]stageMeta) models.ProjectRow {
 	stage := strings.TrimSpace(toString(anyMapGet(deal, "STAGE_ID", "stageId")))
 	stageName := stage
 	if meta, ok := stageLabels[stage]; ok {
@@ -842,7 +842,7 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 		location = enumValue(enumLabels, dealFieldMunicipality, toString(anyMapGet(deal, dealFieldMunicipality)))
 	}
 
-	return model.ProjectRow{
+	return models.ProjectRow{
 		DealID:       toInt(toString(anyMapGet(deal, "ID", "id"))),
 		Section:      firstNonEmpty(stageName, stage),
 		ProjectID:    toInt(toString(anyMapGet(deal, "UF_CRM_PROJECT_GROUP_ID"))),
@@ -902,7 +902,7 @@ func normalizeJobs(v string) string {
 	return ""
 }
 
-func (c *Client) applySupportFromLinkedDeals(ctx context.Context, items []map[string]any, rows []model.ProjectRow, enumLabels map[string]map[string]string) {
+func (c *Client) applySupportFromLinkedDeals(ctx context.Context, items []map[string]any, rows []models.ProjectRow, enumLabels map[string]map[string]string) {
 	linkField := strings.TrimSpace(c.supportLinkDealField)
 	if linkField == "" || len(items) == 0 || len(rows) == 0 {
 		return

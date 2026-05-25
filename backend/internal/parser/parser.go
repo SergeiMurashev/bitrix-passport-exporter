@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -38,7 +38,7 @@ var columnAliases = map[string][]string{
 	"Заемные средства, план":            {"Заемные средства, план", "Заемные средства , план", "Заёмные средства, план"},
 }
 
-func ParseDealsInput(r io.Reader) ([]model.ProjectRow, error) {
+func ParseDealsInput(r io.Reader) ([]models.ProjectRow, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func ParseDealsInput(r io.Reader) ([]model.ProjectRow, error) {
 	return parseDealsHTML(data)
 }
 
-func parseDealsXLSX(data []byte) ([]model.ProjectRow, error) {
+func parseDealsXLSX(data []byte) ([]models.ProjectRow, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func parseDealsXLSX(data []byte) ([]model.ProjectRow, error) {
 	return buildProjectsFromTable(rowsToMaps(rows))
 }
 
-func parseDealsHTML(data []byte) ([]model.ProjectRow, error) {
+func parseDealsHTML(data []byte) ([]models.ProjectRow, error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ func rowsToMaps(rows [][]string) []map[string]string {
 	return out
 }
 
-func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error) {
+func buildProjectsFromTable(rows []map[string]string) ([]models.ProjectRow, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -133,7 +133,7 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 		}
 	}
 
-	bySection := map[string][]model.ProjectRow{}
+	bySection := map[string][]models.ProjectRow{}
 	for _, r := range rows {
 		title := getCell(r, "Название сделки")
 		if title == "" {
@@ -155,7 +155,7 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 			getCell(r, "Контакт"),
 			getCell(r, "Клиент"),
 		)
-		bySection[sectionKey] = append(bySection[sectionKey], model.ProjectRow{
+		bySection[sectionKey] = append(bySection[sectionKey], models.ProjectRow{
 			DealID:       extractFirstInt(getCell(r, "ID")),
 			DealTitle:    title,
 			Location:     address,
@@ -174,7 +174,7 @@ func buildProjectsFromTable(rows []map[string]string) ([]model.ProjectRow, error
 
 	order, labels := buildSectionOrder(bySection)
 	seq := 1
-	out := make([]model.ProjectRow, 0, len(rows))
+	out := make([]models.ProjectRow, 0, len(rows))
 	for _, key := range order {
 		projects := bySection[key]
 		sort.SliceStable(projects, func(i, j int) bool {
@@ -291,7 +291,7 @@ func detectSection(stage, endDate, progress string) string {
 	}
 }
 
-func buildSectionOrder(groups map[string][]model.ProjectRow) ([]string, map[string]string) {
+func buildSectionOrder(groups map[string][]models.ProjectRow) ([]string, map[string]string) {
 	currentYear := time.Now().Year()
 	fixed := []string{
 		fmt.Sprintf("%d_сопровождение", currentYear),

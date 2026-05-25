@@ -1,4 +1,4 @@
-package model
+package models
 
 type APIError struct {
 	Code   string `json:"code" example:"AUTH_REQUIRED"`
@@ -116,8 +116,8 @@ type CancelExportResponse struct {
 }
 
 type DealIDsData struct {
-	Count int   `json:"count" example:"9854"`
-	Deals []int `json:"deals"`
+	Count int `json:"count" example:"9854"`
+	Deals any `json:"deals"`
 }
 
 type DealIDsResponse struct {
@@ -128,8 +128,8 @@ type DealIDsResponse struct {
 }
 
 type DealFieldsData struct {
-	Count  int           `json:"count" example:"120"`
-	Fields []interface{} `json:"fields"`
+	Count  int `json:"count" example:"120"`
+	Fields any `json:"fields"`
 }
 
 type DealFieldsResponse struct {

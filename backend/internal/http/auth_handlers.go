@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 func (h *Handler) withAccessControl(next http.Handler) http.Handler {
@@ -151,7 +151,7 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var in model.AuthLoginRequest
+	var in models.AuthLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErrorDefSimple(w, errInvalidJSON, "invalid json body")
 		return
@@ -197,10 +197,10 @@ func (h *Handler) authLogin(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"authorized",
 		"Вход выполнен",
-		model.AuthLoginData{
+		models.AuthLoginData{
 			ExpiresAt: expiresAt.UTC().Format(time.RFC3339Nano),
 			Session:   "cookie",
-			User: model.APIUser{
+			User: models.APIUser{
 				ID:    user.ID,
 				Login: user.Login,
 			},
@@ -228,9 +228,11 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 			http.StatusOK,
 			"authorized",
 			"Сессия активна",
-			map[string]any{
-				"user": model.APIUser{ID: 0, Login: "system"},
-			}, nil)
+			models.AuthMeData{
+				User: models.APIUser{ID: 0, Login: "system"},
+			},
+			nil,
+		)
 		return
 	}
 	claims, ok := h.sessionClaimsFromRequest(r)
@@ -249,8 +251,8 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"authorized",
 		"Сессия активна",
-		model.AuthMeData{
-			User:      model.APIUser{ID: claims.UserID, Login: claims.Login},
+		models.AuthMeData{
+			User:      models.APIUser{ID: claims.UserID, Login: claims.Login},
 			ExpiresAt: claims.ExpiresAt.Time.UTC().Format(time.RFC3339Nano),
 		}, nil)
 }
@@ -275,7 +277,7 @@ func (h *Handler) authLogout(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"logged_out",
 		"Выход выполнен",
-		model.LogoutData{LoggedOut: true}, nil)
+		models.LogoutData{LoggedOut: true}, nil)
 }
 
 func userIDFromClaims(claims *auth.Claims) int64 {

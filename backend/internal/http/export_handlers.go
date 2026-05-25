@@ -14,9 +14,8 @@ import (
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/export"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/service"
 	log "github.com/sirupsen/logrus"
 )
@@ -79,27 +78,10 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	webhook := strings.TrimSpace(h.cfg.Webhook)
-	if webhook == "" {
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"WEBHOOK_EMPTY",
-			"Сервер не настроен: не указан webhook Bitrix24",
-			"server is not configured: BITRIX_WEBHOOK_URL is empty",
-		)
-		return
-	}
 	projectField := projectFieldCode
 
-	bClient, err := bitrix.NewFromWebhook(webhook)
-	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"WEBHOOK_INVALID",
-			"Некорректный webhook Bitrix24",
-			"invalid webhook: "+err.Error())
+	bClient, ok := h.newBitrixClientFromConfig(w)
+	if !ok {
 		return
 	}
 	bClient.ConfigureSupportMapping(h.cfg.SupportLinkDealField, h.cfg.SupportMeasureValueField)
@@ -245,14 +227,14 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		allowTitleFallback = false
 	}
 	var (
-		tasks  []model.TaskRow
+		tasks  []models.TaskRow
 		issues []string
 	)
 	if isFullBitrixExport {
 		const pageSize = 200
 		start := 0
 		processed := 0
-		var allProjects []model.ProjectRow
+		var allProjects []models.ProjectRow
 		for {
 			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
 			if pageErr != nil {
@@ -497,7 +479,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"export_completed",
 		"Выгрузка завершена, файл готов к скачиванию",
-		model.ExportCompletedData{
+		models.ExportCompletedData{
 			FileName:    filename,
 			ContentType: contentType,
 			SizeBytes:   len(result),
@@ -505,7 +487,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			Format:      exportFormat,
 			Source:      sourceLabel,
 			IssuesCount: len(issues),
-			Stats: model.ExportStatsData{
+			Stats: models.ExportStatsData{
 				DealsTotal:           stats.DealsTotal,
 				TasksTotal:           stats.TasksTotal,
 				DealsWithSupport:     stats.DealsWithSupport,
@@ -690,7 +672,7 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 		http.StatusAccepted,
 		"cancel_requested",
 		"Запрос на отмену выгрузки отправлен",
-		model.CancelExportData{CancelRequested: true},
+		models.CancelExportData{CancelRequested: true},
 		nil,
 	)
 }

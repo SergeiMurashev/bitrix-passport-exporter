@@ -14,13 +14,13 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	h.regExportRoutes(mux, guard)
 }
 
-/* Группа ручек для контроля работы сервера */
+// regHealthRoutes регистрирует конечные точки работоспособности/готовности.
 func (h *Handler) regHealthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
 	mux.HandleFunc("/readyz", h.readyz)
 }
 
-/* Группа ручек статичных маршрутов */
+// regStaticRoutes регистрирует статические файлы и точку входа пользовательского интерфейса.
 func (h *Handler) regStaticRoutes(mux *http.ServeMux) {
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), "assets")))))
 	mux.Handle("/invest-agent-logo-dark.png", http.FileServer(http.Dir(frontendDistDir())))
@@ -29,20 +29,20 @@ func (h *Handler) regStaticRoutes(mux *http.ServeMux) {
 	mux.Handle("/", http.HandlerFunc(h.ui))
 }
 
-/* Группа ручек авторизаций bitrix-exporters */
+// regAuthRoutes регистрирует конечные точки API аутентификации.
 func (h *Handler) regAuthRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.HandleFunc("/api/auth/login", h.authLogin)
 	mux.Handle("/api/auth/me", guard(http.HandlerFunc(h.authMe)))
 	mux.Handle("/api/auth/logout", guard(http.HandlerFunc(h.authLogout)))
 }
 
-/* Группа ручек для работы с сделками Bitrix24 */
+// regDealRoutes регистрирует конечные точки метаданных сделки.
 func (h *Handler) regDealRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.Handle("/api/deals/ids", guard(http.HandlerFunc(h.dealIDs)))
 	mux.Handle("/api/deals/fields", guard(http.HandlerFunc(h.dealFields)))
 }
 
-/* Группа ручек для работы с экспортом файла */
+// regExportRoutes регистрирует конечные точки жизненного цикла экспорта.
 func (h *Handler) regExportRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.Handle("/api/export/status", guard(http.HandlerFunc(h.exportStatus)))
 	mux.Handle("/api/export/download-last", guard(http.HandlerFunc(h.downloadLastExport)))

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 type docxPara struct {
@@ -21,7 +21,7 @@ type docxCell struct {
 	center   bool
 }
 
-func BuildResultDOCX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte, error) {
+func BuildResultDOCX(projects []models.ProjectRow, tasks []models.TaskRow) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 
@@ -53,7 +53,7 @@ func writeDocxPart(zw *zip.Writer, name, body string) error {
 	return err
 }
 
-func buildDocumentXML(projects []model.ProjectRow, tasks []model.TaskRow) string {
+func buildDocumentXML(projects []models.ProjectRow, tasks []models.TaskRow) string {
 	headers := []string{"№ п/п", "Инвестиционный проект", "Стадия", "Задача проекта", "Меры поддержки по проекту"}
 	// Ширины в twips под A4 landscape с полями 720 twips:
 	// полезная ширина = 16840 - 720 - 720 = 15400

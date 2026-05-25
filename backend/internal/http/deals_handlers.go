@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/parser"
 	log "github.com/sirupsen/logrus"
 )
@@ -33,25 +33,8 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webhook := strings.TrimSpace(h.cfg.Webhook)
-	if webhook == "" {
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"WEBHOOK_EMPTY",
-			"Сервер не настроен: не указан webhook Bitrix24",
-			"server is not configured: BITRIX_WEBHOOK_URL is empty",
-		)
-		return
-	}
-
-	bClient, err := bitrix.NewFromWebhook(webhook)
-	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"WEBHOOK_INVALID",
-			"Некорректный webhook Bitrix24", "invalid webhook: "+err.Error())
+	bClient, ok := h.newBitrixClientFromConfig(w)
+	if !ok {
 		return
 	}
 
@@ -74,10 +57,12 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"deal_ids_loaded",
 		"Список ID сделок загружен",
-		map[string]any{
-			"count": len(deals),
-			"deals": deals,
-		}, nil)
+		models.DealIDsData{
+			Count: len(deals),
+			Deals: deals,
+		},
+		nil,
+	)
 }
 
 // dealFields godoc
@@ -97,24 +82,8 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	webhook := strings.TrimSpace(h.cfg.Webhook)
-	if webhook == "" {
-		writeAPIErrorSimple(
-			w,
-			http.StatusInternalServerError,
-			"WEBHOOK_EMPTY",
-			"Сервер не настроен: не указан webhook Bitrix24",
-			"server is not configured: BITRIX_WEBHOOK_URL is empty")
-		return
-	}
-	bClient, err := bitrix.NewFromWebhook(webhook)
-	if err != nil {
-		writeAPIErrorSimple(
-			w,
-			http.StatusBadRequest,
-			"WEBHOOK_INVALID",
-			"Некорректный webhook Bitrix24",
-			"invalid webhook: "+err.Error())
+	bClient, ok := h.newBitrixClientFromConfig(w)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -135,13 +104,12 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"deal_fields_loaded",
 		"Поля сделок загружены",
-		map[string]any{
-			"count":  len(fields),
-			"fields": fields,
-		}, nil)
+		models.DealFieldsData{Count: len(fields), Fields: fields},
+		nil,
+	)
 }
 
-func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]model.ProjectRow, string, error) {
+func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]models.ProjectRow, string, error) {
 	file, fh, err := r.FormFile("file")
 	if err == nil {
 		defer file.Close()
@@ -254,7 +222,7 @@ func sanitizeASCII(s string) string {
 	return s
 }
 
-func collectSupportStats(projects []model.ProjectRow) (int, int) {
+func collectSupportStats(projects []models.ProjectRow) (int, int) {
 	dealsWithSupport := 0
 	measuresTotal := 0
 	for _, p := range projects {

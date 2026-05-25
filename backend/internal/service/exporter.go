@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 type Exporter struct {
@@ -41,17 +41,17 @@ func NewExporter(client *bitrix.Client, taskWorkers int, strategy string) *Expor
 	return &Exporter{bitrix: client, taskWorkers: taskWorkers, strategy: strings.ToLower(strings.TrimSpace(strategy))}
 }
 
-func (e *Exporter) BuildTasks(ctx context.Context, projects []model.ProjectRow, projectField string, allowTitleFallback bool) ([]model.TaskRow, ExportStats, []string, error) {
+func (e *Exporter) BuildTasks(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
 	if e.strategy == "bulk" {
 		return e.buildTasksBulk(ctx, projects, projectField, allowTitleFallback)
 	}
 	return e.buildTasksPerDeal(ctx, projects, projectField, allowTitleFallback)
 }
 
-func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.ProjectRow, projectField string, allowTitleFallback bool) ([]model.TaskRow, ExportStats, []string, error) {
+func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
 	userCache := map[int]string{}
 	userMu := sync.Mutex{}
-	var tasks []model.TaskRow
+	var tasks []models.TaskRow
 	var issues []string
 	var tasksMu sync.Mutex
 	var issuesMu sync.Mutex
@@ -66,11 +66,11 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 		workerCount = 1
 	}
 
-	jobs := make(chan model.ProjectRow)
+	jobs := make(chan models.ProjectRow)
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 
-	process := func(p model.ProjectRow) error {
+	process := func(p models.ProjectRow) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 			statsMu.Unlock()
 		}
 
-		localTasks := make([]model.TaskRow, 0, len(taskPool))
+		localTasks := make([]models.TaskRow, 0, len(taskPool))
 		for _, t := range taskPool {
 			respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))
 			responsible := ""
@@ -180,7 +180,7 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 				}
 			}
 			statusCode := toInt(anyMapGet(t, "status", "STATUS"))
-			localTasks = append(localTasks, model.TaskRow{
+			localTasks = append(localTasks, models.TaskRow{
 				DealID:      p.DealID,
 				DealTitle:   p.DealTitle,
 				ProjectID:   projectID,
@@ -238,10 +238,10 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []model.Proje
 	return tasks, stats, issues, nil
 }
 
-func (e *Exporter) buildTasksBulk(ctx context.Context, projects []model.ProjectRow, projectField string, allowTitleFallback bool) ([]model.TaskRow, ExportStats, []string, error) {
+func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
 	_ = allowTitleFallback
 	stats := ExportStats{DealsTotal: len(projects)}
-	var tasks []model.TaskRow
+	var tasks []models.TaskRow
 	var issues []string
 	userCache := map[int]string{}
 
@@ -264,8 +264,8 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []model.ProjectR
 		}
 	}
 
-	projectToDeals := map[int][]model.ProjectRow{}
-	var unresolved []model.ProjectRow
+	projectToDeals := map[int][]models.ProjectRow{}
+	var unresolved []models.ProjectRow
 	for _, p := range projects {
 		if p.ProjectID > 0 {
 			projectToDeals[p.ProjectID] = append(projectToDeals[p.ProjectID], p)
@@ -300,7 +300,7 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []model.ProjectR
 					}
 				}
 				statusCode := toInt(anyMapGet(t, "status", "STATUS"))
-				tasks = append(tasks, model.TaskRow{
+				tasks = append(tasks, models.TaskRow{
 					DealID:      d.DealID,
 					DealTitle:   d.DealTitle,
 					ProjectID:   projectID,
@@ -343,7 +343,7 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []model.ProjectR
 					}
 				}
 				statusCode := toInt(anyMapGet(t, "status", "STATUS"))
-				tasks = append(tasks, model.TaskRow{
+				tasks = append(tasks, models.TaskRow{
 					DealID:      d.DealID,
 					DealTitle:   d.DealTitle,
 					ProjectID:   0,

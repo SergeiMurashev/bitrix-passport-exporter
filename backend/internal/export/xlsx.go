@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/model"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -17,7 +17,7 @@ var (
 	richFontBold   = &excelize.Font{Bold: true, Family: "Arial", Size: 11}
 )
 
-func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte, error) {
+func BuildResultXLSX(projects []models.ProjectRow, tasks []models.TaskRow) ([]byte, error) {
 	f := excelize.NewFile()
 	defer f.Close()
 
@@ -111,10 +111,10 @@ func BuildResultXLSX(projects []model.ProjectRow, tasks []model.TaskRow) ([]byte
 
 type sectionGroup struct {
 	name     string
-	projects []model.ProjectRow
+	projects []models.ProjectRow
 }
 
-func groupBySection(projects []model.ProjectRow) []sectionGroup {
+func groupBySection(projects []models.ProjectRow) []sectionGroup {
 	ordered := make([]sectionGroup, 0, 12)
 	idx := make(map[string]int, 12)
 	for _, p := range projects {
@@ -127,7 +127,7 @@ func groupBySection(projects []model.ProjectRow) []sectionGroup {
 			continue
 		}
 		idx[name] = len(ordered)
-		ordered = append(ordered, sectionGroup{name: name, projects: []model.ProjectRow{p}})
+		ordered = append(ordered, sectionGroup{name: name, projects: []models.ProjectRow{p}})
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		wi, yi := sectionOrderKey(ordered[i].name)
@@ -167,8 +167,8 @@ func sectionOrderKey(name string) (weight int, year int) {
 	}
 }
 
-func buildTasksByDeal(tasks []model.TaskRow) map[int]string {
-	grouped := make(map[int][]model.TaskRow)
+func buildTasksByDeal(tasks []models.TaskRow) map[int]string {
+	grouped := make(map[int][]models.TaskRow)
 	for _, t := range tasks {
 		grouped[t.DealID] = append(grouped[t.DealID], t)
 	}
