@@ -15,6 +15,7 @@ type Handler struct {
 	auth                  *auth.Manager
 	loginLimiter          *rateWindowLimiter
 	exportLimiter         *rateWindowLimiter
+	portalSessions        map[string]portalSession
 	mu                    sync.Mutex
 	fullExportBusy        bool
 	fullExportCancel      context.CancelFunc
@@ -64,7 +65,8 @@ func New(cfg config.Config) (*Handler, error) {
 			cfg.RateLimitExportPerMinute,
 			time.Minute,
 		),
-		status: exportStatus{Phase: "idle"},
+		portalSessions: make(map[string]portalSession),
+		status:         exportStatus{Phase: "idle"},
 	}, nil
 }
 

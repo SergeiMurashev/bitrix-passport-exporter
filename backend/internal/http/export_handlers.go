@@ -49,6 +49,14 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	exportStartedAt := time.Now()
 	claims, _ := h.sessionClaimsFromRequest(r)
+	requestUserID := userIDFromClaims(claims)
+	requestUserLogin := userLoginFromClaims(claims)
+	if requestUserID == 0 {
+		if portalSession, ok := h.portalSessionFromRequest(r); ok {
+			requestUserID = portalSession.UserID
+			requestUserLogin = strings.TrimSpace(portalSession.UserLogin)
+		}
+	}
 	exportMode := detectExportMode(r, req.dealIDs)
 	sourceLabel := "unknown"
 	auditSuccess := false
@@ -62,8 +70,8 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 			auditErrText = "request failed"
 		}
 		h.recordExportAudit(context.Background(), auth.ExportAuditRecord{
-			UserID:               userIDFromClaims(claims),
-			UserLogin:            userLoginFromClaims(claims),
+			UserID:               requestUserID,
+			UserLogin:            requestUserLogin,
 			ClientIP:             req.clientIP,
 			Source:               sourceLabel,
 			Mode:                 exportMode,

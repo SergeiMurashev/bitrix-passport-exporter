@@ -80,7 +80,7 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 		dealTasks, err := e.bitrix.GetDealTasks(ctx, p.DealID)
 		if err != nil {
 			if bitrix.IsAuthError(err) {
-				return fmt.Errorf("bitrix webhook auth failed: %w", err)
+				return fmt.Errorf("bitrix auth failed: %w", err)
 			}
 			if bitrix.IsTimeoutError(err) || ctx.Err() != nil {
 				return fmt.Errorf("bitrix timeout while loading deal tasks for deal_id=%d: %w", p.DealID, err)
@@ -97,7 +97,7 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(ctx, p, projectField, allowTitleFallback)
 			if resolveErr != nil {
 				if bitrix.IsAuthError(resolveErr) {
-					return fmt.Errorf("bitrix webhook auth failed: %w", resolveErr)
+					return fmt.Errorf("bitrix auth failed: %w", resolveErr)
 				}
 				if bitrix.IsTimeoutError(resolveErr) || ctx.Err() != nil {
 					return fmt.Errorf("bitrix timeout while resolving project for deal_id=%d: %w", p.DealID, resolveErr)

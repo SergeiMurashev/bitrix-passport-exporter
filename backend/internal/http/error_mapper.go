@@ -21,6 +21,18 @@ var (
 		Message:  "Некорректный webhook Bitrix24",
 		Code:     "WEBHOOK_INVALID",
 	}
+	errPortalContextMissing = apiErrorDef{
+		HTTPCode: http.StatusBadRequest,
+		Status:   "bad_request",
+		Message:  "Не передан контекст портала Bitrix24",
+		Code:     "PORTAL_CONTEXT_MISSING",
+	}
+	errPortalSessionRequired = apiErrorDef{
+		HTTPCode: http.StatusUnauthorized,
+		Status:   "unauthorized",
+		Message:  "Требуется активный контекст портала Bitrix24",
+		Code:     "PORTAL_SESSION_REQUIRED",
+	}
 	errLoginRateLimited = apiErrorDef{
 		HTTPCode: http.StatusTooManyRequests,
 		Status:   "rate_limited",

@@ -49,9 +49,11 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !requireMethod(w, r, http.MethodGet) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeAPIErrorDefSimple(w, errMethodNotAllowed, "method not allowed")
 		return
 	}
+	_ = h.bootstrapPortalSessionFromRequest(w, r)
 	indexPath := filepath.Join(frontendDistDir(), "index.html")
 	body, err := os.ReadFile(indexPath)
 	if err != nil {

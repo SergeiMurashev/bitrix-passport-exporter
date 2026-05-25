@@ -15,10 +15,13 @@ import (
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
+	"github.com/kurerid/bixgo"
 )
 
 type Client struct {
 	endpoint                 string
+	baseURL                  string
+	bix                      *bixgo.Client
 	http                     *http.Client
 	supportLinkDealField     string
 	supportMeasureValueField string
@@ -70,6 +73,7 @@ type bitrixResponse struct {
 	Desc   string `json:"error_description"`
 }
 
+// NewFromWebhook создает новый клиент Bitrix24, используя URL вебхука как follback.
 func NewFromWebhook(webhook string) (*Client, error) {
 	u, err := url.Parse(strings.TrimSpace(webhook))
 	if err != nil {
@@ -79,9 +83,53 @@ func NewFromWebhook(webhook string) (*Client, error) {
 	if len(parts) < 3 || parts[0] != "rest" {
 		return nil, fmt.Errorf("unexpected webhook path: %s", u.Path)
 	}
+	baseURL := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	authToken := fmt.Sprintf("%s/%s", parts[1], parts[2])
+	auth := bixgo.NewClientAuth(authToken, "", time.Now().Add(365*24*time.Hour), "", "")
+	bixClient := bixgo.NewClientWithTimeout(baseURL, auth, 90*time.Second)
 	endpoint := fmt.Sprintf("%s://%s/rest/%s/%s", u.Scheme, u.Host, parts[1], parts[2])
 	return &Client{
+		baseURL:  baseURL,
+		bix:      bixClient,
 		endpoint: endpoint,
+		http: &http.Client{
+			Timeout: 90 * time.Second,
+		},
+		supportMeasureValueField: dealFieldSupportMeasure,
+	}, nil
+}
+
+// NewFromPortalSession создает новый клиент Bitrix24, используя данные сеанса портала.
+func NewFromPortalSession(
+	domain,
+	accessToken,
+	refreshToken string,
+	expiresAt time.Time,
+	clientID, clientSecret string) (*Client, error) {
+	baseURL := strings.TrimSpace(domain)
+	if baseURL == "" {
+		return nil, fmt.Errorf("portal domain is empty")
+	}
+	if !strings.HasPrefix(strings.ToLower(baseURL), "http://") && !strings.HasPrefix(strings.ToLower(baseURL), "https://") {
+		baseURL = "https://" + baseURL
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.TrimSpace(accessToken) == "" {
+		return nil, fmt.Errorf("portal access token is empty")
+	}
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(1 * time.Hour)
+	}
+	auth := bixgo.NewClientAuth(
+		strings.TrimSpace(accessToken),
+		strings.TrimSpace(refreshToken),
+		expiresAt,
+		strings.TrimSpace(clientID),
+		strings.TrimSpace(clientSecret),
+	)
+	return &Client{
+		baseURL: baseURL,
+		bix:     bixgo.NewClientWithTimeout(baseURL, auth, 90*time.Second),
 		http: &http.Client{
 			Timeout: 90 * time.Second,
 		},
@@ -697,6 +745,9 @@ func (c *Client) callWithRetry(ctx context.Context, method string, params map[st
 }
 
 func (c *Client) call(ctx context.Context, method string, params map[string]any) (*bitrixResponse, error) {
+	if c.bix != nil {
+		return c.callViaBixgo(ctx, method, params)
+	}
 	endpoint := fmt.Sprintf("%s/%s.json", c.endpoint, method)
 
 	var body io.Reader
@@ -744,6 +795,36 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any)
 	}
 
 	return &out, nil
+}
+
+func (c *Client) callViaBixgo(ctx context.Context, method string, params map[string]any) (*bitrixResponse, error) {
+	if c.bix == nil {
+		return nil, fmt.Errorf("bitrix client is not initialized")
+	}
+	requestParams := make(bixgo.Params, len(params))
+	for k, v := range params {
+		requestParams[k] = v
+	}
+	var listResponse bixgo.ListResponse[any]
+	if err := c.bix.Call(ctx, method, requestParams, &listResponse); err != nil {
+		return nil, fmt.Errorf("bitrix %s call failed: %w", method, err)
+	}
+	out := &bitrixResponse{
+		Result: listResponse.Result,
+	}
+	// Для методов со списками (`crm.deal.list`) в bixgo нет поля `next`,
+	// поэтому вычисляем его из `start`, `total` и количества элементов.
+	if items := toSliceMap(listResponse.Result); len(items) > 0 {
+		start := 0
+		if params != nil {
+			start = toInt(fmt.Sprintf("%v", params["start"]))
+		}
+		next := start + len(items)
+		if listResponse.Total > 0 && next < listResponse.Total && len(items) >= 50 {
+			out.Next = next
+		}
+	}
+	return out, nil
 }
 
 func IsAuthError(err error) bool {

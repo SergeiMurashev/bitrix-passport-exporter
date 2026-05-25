@@ -16,7 +16,8 @@ func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	token := strings.TrimSpace(h.cfg.APIAccessToken)
 	useToken := token != ""
 	useAuth := h.auth != nil
-	if !useToken && !useAuth {
+	usePortal := true
+	if !useToken && !useAuth && !usePortal {
 		return next
 	}
 
@@ -48,6 +49,12 @@ func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if usePortal {
+			if _, ok := h.portalSessionFromRequest(r); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
 		if useToken && tokenAllowed(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -192,6 +199,23 @@ func (h *Handler) authMe(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
+	if session, ok := h.portalSessionFromRequest(r); ok {
+		writeAPISuccess(
+			w,
+			http.StatusOK,
+			"authorized",
+			"Сессия портала активна",
+			models.AuthMeData{
+				User: models.APIUser{
+					ID:    session.UserID,
+					Login: strings.TrimSpace(session.UserLogin),
+				},
+				ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339Nano),
+			},
+			nil,
+		)
+		return
+	}
 	if h.auth == nil {
 		writeAPISuccess(
 			w,
@@ -235,6 +259,7 @@ func (h *Handler) authLogout(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
+	h.clearPortalSession(w, r)
 	h.clearSessionCookie(w, r)
 	writeAPISuccess(
 		w,

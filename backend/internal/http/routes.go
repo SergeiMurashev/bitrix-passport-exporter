@@ -9,6 +9,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	guard := h.withAccessControl
 	h.regHealthRoutes(mux)
 	h.regStaticRoutes(mux)
+	h.regPortalRoutes(mux, guard)
 	h.regAuthRoutes(mux, guard)
 	h.regDealRoutes(mux, guard)
 	h.regExportRoutes(mux, guard)
@@ -27,6 +28,12 @@ func (h *Handler) regStaticRoutes(mux *http.ServeMux) {
 	mux.Handle("/invest-agent-logo-light.png", http.FileServer(http.Dir(frontendDistDir())))
 	mux.Handle("/logo1.png", http.FileServer(http.Dir(frontendDistDir())))
 	mux.Handle("/", http.HandlerFunc(h.ui))
+}
+
+// regPortalRoutes регистрирует точки инициализации сессии Bitrix24 portal app.
+func (h *Handler) regPortalRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
+	mux.HandleFunc("/api/portal/session", h.portalSessionBootstrap)
+	mux.Handle("/api/portal/me", guard(http.HandlerFunc(h.portalMe)))
 }
 
 // regAuthRoutes регистрирует конечные точки API аутентификации.

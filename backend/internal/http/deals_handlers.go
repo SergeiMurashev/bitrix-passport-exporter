@@ -33,7 +33,7 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bClient, ok := h.newBitrixClientFromConfig(w)
+	bClient, ok := h.newBitrixClientFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -78,7 +78,7 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	bClient, ok := h.newBitrixClientFromConfig(w)
+	bClient, ok := h.newBitrixClientFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -144,7 +144,7 @@ func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bi
 	projects, err := bClient.GetDealsByIDs(ctx, dealIDs)
 	if err != nil {
 		if bitrix.IsAuthError(err) {
-			return nil, "", fmt.Errorf("bitrix webhook is invalid or expired")
+			return nil, "", fmt.Errorf("bitrix auth token is invalid or expired")
 		}
 		return nil, "", fmt.Errorf("failed to load deals from bitrix: %w", err)
 	}

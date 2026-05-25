@@ -13,6 +13,8 @@ import (
 type Config struct {
 	Addr                     string
 	Webhook                  string
+	BitrixAppClientID        string
+	BitrixAppClientSecret    string
 	TaskWorkers              int
 	TaskStrategy             string
 	HTTPReadTimeoutSeconds   int
@@ -40,6 +42,8 @@ func Load() Config {
 	return Config{
 		Addr:                     env("ADDR", ":25504"),
 		Webhook:                  env("BITRIX_WEBHOOK_URL", ""),
+		BitrixAppClientID:        env("BITRIX_APP_CLIENT_ID", ""),
+		BitrixAppClientSecret:    env("BITRIX_APP_CLIENT_SECRET", ""),
 		TaskWorkers:              envInt("TASK_WORKERS", 10),
 		TaskStrategy:             env("TASK_STRATEGY", "per_deal"),
 		HTTPReadTimeoutSeconds:   envInt("HTTP_READ_TIMEOUT_SECONDS", 20),

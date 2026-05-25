@@ -68,7 +68,7 @@ func (h *Handler) collectExportData(
 	req exportRequest,
 	auditErrText *string,
 ) ([]models.ProjectRow, []models.TaskRow, []string, service.ExportStats, string, bool) {
-	bClient, ok := h.newBitrixClientFromConfig(w)
+	bClient, ok := h.newBitrixClientFromRequest(w, r)
 	if !ok {
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
@@ -259,8 +259,8 @@ func (h *Handler) handleTasksCollectError(w http.ResponseWriter, err error, audi
 		*auditErrText = detail
 	}
 	h.markStatusError(detail)
-	if strings.Contains(err.Error(), "webhook auth failed") {
-		writeMappedError(w, errWebhookAuthFailed, "bitrix webhook is invalid or expired")
+	if strings.Contains(strings.ToLower(err.Error()), "bitrix auth failed") {
+		writeMappedError(w, errWebhookAuthFailed, "bitrix auth token is invalid or expired")
 		return
 	}
 

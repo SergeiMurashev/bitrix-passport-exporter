@@ -19,3 +19,10 @@ type DealField struct {
 	Title string `json:"title"`
 	Type  string `json:"type"`
 }
+
+type PortalSessionData struct {
+	Ready    bool    `json:"ready"`
+	Domain   string  `json:"domain,omitempty"`
+	MemberID string  `json:"member_id,omitempty"`
+	User     APIUser `json:"user"`
+}
