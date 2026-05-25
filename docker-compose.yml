@@ -1,31 +1,9 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: bitrix-passport-exporter-postgres
-    environment:
-      POSTGRES_DB: ${AUTH_DB_NAME:-bitrix_db}
-      POSTGRES_USER: ${AUTH_DB_USER:-invest_db_user}
-      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-1234}
-    ports:
-      - "5436:5432"
-    volumes:
-      - bitrix-passport-exporter-pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-invest_db_user} -d ${AUTH_DB_NAME:-bitrix_db}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 8s
-    restart: unless-stopped
-
   bitrix-passport-exporter:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: bitrix-passport-exporter
-    depends_on:
-      postgres:
-        condition: service_healthy
     env_file:
       - .env
     ports:
@@ -37,6 +15,3 @@ services:
       retries: 6
       start_period: 20s
     restart: unless-stopped
-
-volumes:
-  bitrix-passport-exporter-pgdata:

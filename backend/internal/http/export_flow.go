@@ -260,7 +260,7 @@ func (h *Handler) handleTasksCollectError(w http.ResponseWriter, err error, audi
 	}
 	h.markStatusError(detail)
 	if strings.Contains(strings.ToLower(err.Error()), "bitrix auth failed") {
-		writeMappedError(w, errWebhookAuthFailed, "bitrix auth token is invalid or expired")
+		writeMappedError(w, errBitrixAuthFailed, "bitrix auth token is invalid or expired")
 		return
 	}
 

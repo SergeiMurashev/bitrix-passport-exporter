@@ -306,15 +306,11 @@ async function checkAuth(): Promise<boolean> {
     const current = await fetchPortalMe()
     if (current) {
       setAuthState(true, current.user?.login || 'Bitrix24')
+      setStatus('', 'muted')
       return true
     }
     const bootstrapped = await bootstrapPortalSessionFromBX24()
     if (!bootstrapped) {
-      const statusCheck = await fetch('/api/export/status')
-      if (statusCheck.ok) {
-        setAuthState(true, 'Системный доступ')
-        return true
-      }
       setAuthState(false)
       setStatus('Откройте приложение из портала Bitrix24 (раздел Приложения).', 'err')
       return false
@@ -326,6 +322,7 @@ async function checkAuth(): Promise<boolean> {
       return false
     }
     setAuthState(true, afterBootstrap.user?.login || 'Bitrix24')
+    setStatus('', 'muted')
     return true
   } catch (_err) {
     setAuthState(false)
@@ -396,7 +393,7 @@ function humanizeError(message: string): string {
       userText: 'Ошибка доступа к Bitrix24: токен портала недействителен или истек.',
     },
     {
-      test: (t) => t.includes('portal session') || t.includes('portal context') || t.includes('bitrix_webhook_url is empty'),
+      test: (t) => t.includes('portal session') || t.includes('portal context'),
       userText: 'Не найден активный контекст Bitrix24. Откройте приложение из портала и повторите.',
     },
     {

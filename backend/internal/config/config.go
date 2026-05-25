@@ -12,7 +12,6 @@ import (
 
 type Config struct {
 	Addr                     string
-	Webhook                  string
 	BitrixAppClientID        string
 	BitrixAppClientSecret    string
 	TaskWorkers              int
@@ -21,19 +20,10 @@ type Config struct {
 	HTTPWriteTimeoutSeconds  int
 	HTTPIdleTimeoutSeconds   int
 	HTTPShutdownTimeoutSecs  int
-	RateLimitLoginPerMinute  int
 	RateLimitExportPerMinute int
 	SupportLinkDealField     string
 	SupportMeasureValueField string
 	APIAccessToken           string
-	AuthEnabled              bool
-	AuthDBDSN                string
-	AuthJWTSecret            string
-	AuthTokenTTLMinutes      int
-	AuthUser1Login           string
-	AuthUser1Password        string
-	AuthUser2Login           string
-	AuthUser2Password        string
 }
 
 func Load() Config {
@@ -41,7 +31,6 @@ func Load() Config {
 
 	return Config{
 		Addr:                     env("ADDR", ":25504"),
-		Webhook:                  env("BITRIX_WEBHOOK_URL", ""),
 		BitrixAppClientID:        env("BITRIX_APP_CLIENT_ID", ""),
 		BitrixAppClientSecret:    env("BITRIX_APP_CLIENT_SECRET", ""),
 		TaskWorkers:              envInt("TASK_WORKERS", 10),
@@ -50,19 +39,10 @@ func Load() Config {
 		HTTPWriteTimeoutSeconds:  envInt("HTTP_WRITE_TIMEOUT_SECONDS", 3600),
 		HTTPIdleTimeoutSeconds:   envInt("HTTP_IDLE_TIMEOUT_SECONDS", 120),
 		HTTPShutdownTimeoutSecs:  envInt("HTTP_SHUTDOWN_TIMEOUT_SECONDS", 20),
-		RateLimitLoginPerMinute:  envIntAllowZero("RATE_LIMIT_LOGIN_PER_MINUTE", 20),
 		RateLimitExportPerMinute: envIntAllowZero("RATE_LIMIT_EXPORT_PER_MINUTE", 6),
 		SupportLinkDealField:     env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
 		SupportMeasureValueField: env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
 		APIAccessToken:           env("API_ACCESS_TOKEN", ""),
-		AuthEnabled:              envBool("AUTH_ENABLED", false),
-		AuthDBDSN:                env("AUTH_DB_DSN", ""),
-		AuthJWTSecret:            env("AUTH_JWT_SECRET", ""),
-		AuthTokenTTLMinutes:      envInt("AUTH_TOKEN_TTL_MINUTES", 720),
-		AuthUser1Login:           env("AUTH_USER_1_LOGIN", ""),
-		AuthUser1Password:        env("AUTH_USER_1_PASSWORD", ""),
-		AuthUser2Login:           env("AUTH_USER_2_LOGIN", ""),
-		AuthUser2Password:        env("AUTH_USER_2_PASSWORD", ""),
 	}
 }
 
@@ -74,16 +54,11 @@ func (c Config) Validate() error {
 	if strategy != "bulk" && strategy != "per_deal" {
 		return fmt.Errorf("TASK_STRATEGY must be one of: bulk, per_deal (got %q)", c.TaskStrategy)
 	}
-	if c.AuthEnabled {
-		if strings.TrimSpace(c.AuthDBDSN) == "" {
-			return errors.New("AUTH_ENABLED=true requires AUTH_DB_DSN")
-		}
-		if strings.TrimSpace(c.AuthJWTSecret) == "" {
-			return errors.New("AUTH_ENABLED=true requires AUTH_JWT_SECRET")
-		}
+	if strings.TrimSpace(c.BitrixAppClientID) == "" {
+		return errors.New("BITRIX_APP_CLIENT_ID is empty")
 	}
-	if c.RateLimitLoginPerMinute < 0 {
-		return errors.New("RATE_LIMIT_LOGIN_PER_MINUTE must be >= 0")
+	if strings.TrimSpace(c.BitrixAppClientSecret) == "" {
+		return errors.New("BITRIX_APP_CLIENT_SECRET is empty")
 	}
 	if c.RateLimitExportPerMinute < 0 {
 		return errors.New("RATE_LIMIT_EXPORT_PER_MINUTE must be >= 0")

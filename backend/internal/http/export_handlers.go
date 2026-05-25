@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/service"
 	log "github.com/sirupsen/logrus"
@@ -48,43 +47,9 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	exportStartedAt := time.Now()
-	claims, _ := h.sessionClaimsFromRequest(r)
-	requestUserID := userIDFromClaims(claims)
-	requestUserLogin := userLoginFromClaims(claims)
-	if requestUserID == 0 {
-		if portalSession, ok := h.portalSessionFromRequest(r); ok {
-			requestUserID = portalSession.UserID
-			requestUserLogin = strings.TrimSpace(portalSession.UserLogin)
-		}
-	}
-	exportMode := detectExportMode(r, req.dealIDs)
 	sourceLabel := "unknown"
-	auditSuccess := false
-	auditErrText := ""
+	exportErrText := ""
 	var stats service.ExportStats
-	defer func() {
-		if auditSuccess {
-			auditErrText = ""
-		}
-		if !auditSuccess && strings.TrimSpace(auditErrText) == "" {
-			auditErrText = "request failed"
-		}
-		h.recordExportAudit(context.Background(), auth.ExportAuditRecord{
-			UserID:               requestUserID,
-			UserLogin:            requestUserLogin,
-			ClientIP:             req.clientIP,
-			Source:               sourceLabel,
-			Mode:                 exportMode,
-			Format:               req.exportFormat,
-			Success:              auditSuccess,
-			ErrorText:            auditErrText,
-			DurationMs:           time.Since(exportStartedAt).Milliseconds(),
-			DealsTotal:           stats.DealsTotal,
-			TasksTotal:           stats.TasksTotal,
-			DealsWithSupport:     stats.DealsWithSupport,
-			SupportMeasuresTotal: stats.SupportMeasuresTotal,
-		})
-	}()
 
 	isFullExport := len(req.dealIDs) == 0
 	fullExportLocked := false
@@ -125,7 +90,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.LastError = ""
 	})
 
-	projects, tasks, issues, computedStats, loadedSourceLabel, ok := h.collectExportData(ctx, w, r, req, &auditErrText)
+	projects, tasks, issues, computedStats, loadedSourceLabel, ok := h.collectExportData(ctx, w, r, req, &exportErrText)
 	if !ok {
 		return
 	}
@@ -135,7 +100,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		log.WithField("issue", issue).Debug("export issue")
 	}
 
-	result, contentType, ok := h.buildExportBinary(w, req.exportFormat, projects, tasks, &auditErrText)
+	result, contentType, ok := h.buildExportBinary(w, req.exportFormat, projects, tasks, &exportErrText)
 	if !ok {
 		return
 	}
@@ -145,7 +110,6 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		fullExportLocked = false
 	}
 	h.completeExportSuccess(w, req.dealIDs, req.exportFormat, sourceLabel, result, contentType, issues, stats, exportStartedAt)
-	auditSuccess = true
 }
 
 func (h *Handler) tryStartFullExport() bool {
@@ -386,20 +350,6 @@ func detectExportMode(r *http.Request, dealIDs []int) string {
 		return "ids"
 	}
 	return "all"
-}
-
-func (h *Handler) recordExportAudit(ctx context.Context, rec auth.ExportAuditRecord) {
-	if h == nil || h.auth == nil {
-		return
-	}
-	if strings.TrimSpace(rec.UserLogin) == "" {
-		rec.UserLogin = "api"
-	}
-	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	if err := h.auth.RecordExportAudit(writeCtx, rec); err != nil {
-		log.WithError(err).Warn("failed to persist export audit")
-	}
 }
 
 func mergeExportStats(a, b service.ExportStats) service.ExportStats {

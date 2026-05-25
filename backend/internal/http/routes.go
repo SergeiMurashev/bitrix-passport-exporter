@@ -10,7 +10,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	h.regHealthRoutes(mux)
 	h.regStaticRoutes(mux)
 	h.regPortalRoutes(mux, guard)
-	h.regAuthRoutes(mux, guard)
 	h.regDealRoutes(mux, guard)
 	h.regExportRoutes(mux, guard)
 }
@@ -34,13 +33,6 @@ func (h *Handler) regStaticRoutes(mux *http.ServeMux) {
 func (h *Handler) regPortalRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.HandleFunc("/api/portal/session", h.portalSessionBootstrap)
 	mux.Handle("/api/portal/me", guard(http.HandlerFunc(h.portalMe)))
-}
-
-// regAuthRoutes регистрирует конечные точки API аутентификации.
-func (h *Handler) regAuthRoutes(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
-	mux.HandleFunc("/api/auth/login", h.authLogin)
-	mux.Handle("/api/auth/me", guard(http.HandlerFunc(h.authMe)))
-	mux.Handle("/api/auth/logout", guard(http.HandlerFunc(h.authLogout)))
 }
 
 // regDealRoutes регистрирует конечные точки метаданных сделки.

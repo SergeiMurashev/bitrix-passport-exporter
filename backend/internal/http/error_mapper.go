@@ -9,18 +9,6 @@ var (
 		Message:  "Фронтенд не собран",
 		Code:     "FRONTEND_NOT_BUILT",
 	}
-	errWebhookEmpty = apiErrorDef{
-		HTTPCode: http.StatusInternalServerError,
-		Status:   "internal_error",
-		Message:  "Сервер не настроен: не указан webhook Bitrix24",
-		Code:     "WEBHOOK_EMPTY",
-	}
-	errWebhookInvalid = apiErrorDef{
-		HTTPCode: http.StatusBadRequest,
-		Status:   "bad_request",
-		Message:  "Некорректный webhook Bitrix24",
-		Code:     "WEBHOOK_INVALID",
-	}
 	errPortalContextMissing = apiErrorDef{
 		HTTPCode: http.StatusBadRequest,
 		Status:   "bad_request",
@@ -32,42 +20,6 @@ var (
 		Status:   "unauthorized",
 		Message:  "Требуется активный контекст портала Bitrix24",
 		Code:     "PORTAL_SESSION_REQUIRED",
-	}
-	errLoginRateLimited = apiErrorDef{
-		HTTPCode: http.StatusTooManyRequests,
-		Status:   "rate_limited",
-		Message:  "Слишком много попыток входа",
-		Code:     "LOGIN_RATE_LIMITED",
-	}
-	errAuthDisabled = apiErrorDef{
-		HTTPCode: http.StatusServiceUnavailable,
-		Status:   "service_unavailable",
-		Message:  "Авторизация отключена на сервере",
-		Code:     "AUTH_DISABLED",
-	}
-	errAuthRequiredFields = apiErrorDef{
-		HTTPCode: http.StatusBadRequest,
-		Status:   "bad_request",
-		Message:  "Логин и пароль обязательны",
-		Code:     "AUTH_REQUIRED_FIELDS",
-	}
-	errInvalidCredentials = apiErrorDef{
-		HTTPCode: http.StatusUnauthorized,
-		Status:   "unauthorized",
-		Message:  "Неверный логин или пароль",
-		Code:     "INVALID_CREDENTIALS",
-	}
-	errTokenIssueFailed = apiErrorDef{
-		HTTPCode: http.StatusInternalServerError,
-		Status:   "internal_error",
-		Message:  "Не удалось создать сессию",
-		Code:     "TOKEN_ISSUE_FAILED",
-	}
-	errSessionRequired = apiErrorDef{
-		HTTPCode: http.StatusUnauthorized,
-		Status:   "unauthorized",
-		Message:  "Сессия отсутствует или истекла",
-		Code:     "AUTH_REQUIRED",
 	}
 	errDealIDsLoadFailed = apiErrorDef{
 		HTTPCode: http.StatusBadGateway,
@@ -153,11 +105,11 @@ var (
 		Message:  "Не удалось загрузить страницу сделок из Bitrix24",
 		Code:     "DEALS_PAGE_LOAD_FAILED",
 	}
-	errWebhookAuthFailed = apiErrorDef{
+	errBitrixAuthFailed = apiErrorDef{
 		HTTPCode: http.StatusBadGateway,
 		Status:   "upstream_error",
-		Message:  "Webhook Bitrix24 недействителен или истек",
-		Code:     "WEBHOOK_AUTH_FAILED",
+		Message:  "Токен Bitrix24 недействителен или истек",
+		Code:     "BITRIX_AUTH_FAILED",
 	}
 	errTasksCollectFailed = apiErrorDef{
 		HTTPCode: http.StatusInternalServerError,

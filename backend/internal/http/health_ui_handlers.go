@@ -1,12 +1,10 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // healthz godoc
@@ -22,25 +20,12 @@ func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 
 // readyz godoc
 // @Summary      Readiness probe
-// @Description  Проверка готовности сервиса (включая auth DB при AUTH_ENABLED=true)
+// @Description  Проверка готовности сервиса
 // @Tags         Health
 // @Produce      plain
 // @Success      200  {string}  string  "ready"
-// @Failure      503  {string}  string  "not ready"
 // @Router       /readyz [get]
 func (h *Handler) readyz(w http.ResponseWriter, _ *http.Request) {
-	if h.auth != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := h.auth.Ready(ctx); err != nil {
-			http.Error(
-				w,
-				"not ready: auth db unavailable",
-				http.StatusServiceUnavailable,
-			)
-			return
-		}
-	}
 	_, _ = w.Write([]byte("ready"))
 }
 

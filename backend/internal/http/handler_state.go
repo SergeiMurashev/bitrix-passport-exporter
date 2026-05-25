@@ -2,18 +2,14 @@ package httpapi
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/auth"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
 )
 
 type Handler struct {
 	cfg                   config.Config
-	auth                  *auth.Manager
-	loginLimiter          *rateWindowLimiter
 	exportLimiter         *rateWindowLimiter
 	portalSessions        map[string]portalSession
 	mu                    sync.Mutex
@@ -47,20 +43,8 @@ type exportStatus struct {
 }
 
 func New(cfg config.Config) (*Handler, error) {
-	var authManager *auth.Manager
-	if cfg.AuthEnabled {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		var err error
-		authManager, err = auth.New(ctx, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("init auth manager: %w", err)
-		}
-	}
 	return &Handler{
-		cfg:          cfg,
-		auth:         authManager,
-		loginLimiter: newRateWindowLimiter(cfg.RateLimitLoginPerMinute, time.Minute),
+		cfg: cfg,
 		exportLimiter: newRateWindowLimiter(
 			cfg.RateLimitExportPerMinute,
 			time.Minute,
@@ -71,8 +55,5 @@ func New(cfg config.Config) (*Handler, error) {
 }
 
 func (h *Handler) Close() error {
-	if h == nil || h.auth == nil {
-		return nil
-	}
-	return h.auth.Close()
+	return nil
 }
