@@ -83,8 +83,8 @@ func (h *Handler) bootstrapPortalSessionFromRequest(w http.ResponseWriter, r *ht
 		Value:    sid,
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		SameSite: sameSiteForRequest(r),
+		Secure:   requestIsHTTPS(r),
 		MaxAge:   int(portalSessionTTL.Seconds()),
 	})
 
@@ -135,10 +135,30 @@ func (h *Handler) clearPortalSession(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   r != nil && r.TLS != nil,
+		SameSite: sameSiteForRequest(r),
+		Secure:   requestIsHTTPS(r),
 		MaxAge:   -1,
 	})
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	return false
+}
+
+func sameSiteForRequest(r *http.Request) http.SameSite {
+	if requestIsHTTPS(r) {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
 }
 
 func (h *Handler) cleanupExpiredPortalSessionsLocked(now time.Time) {

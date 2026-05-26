@@ -51,8 +51,8 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 			Value:    token,
 			Path:     "/api",
 			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   r.TLS != nil,
+			SameSite: sameSiteForRequest(r),
+			Secure:   requestIsHTTPS(r),
 			MaxAge:   30 * 24 * 60 * 60,
 		})
 	}
