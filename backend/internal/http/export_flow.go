@@ -127,6 +127,16 @@ func (h *Handler) collectExportData(
 			allProjects = append(allProjects, page.Rows...)
 			processed += len(page.Rows)
 			pageDealsWithSupport, pageSupportMeasures := collectSupportStats(page.Rows)
+			log.WithFields(log.Fields{
+				"phase":                 "passport",
+				"deals_page_start":      start,
+				"deals_page_size":       len(page.Rows),
+				"deals_processed":       processed,
+				"deals_total_reported":  page.Total,
+				"deals_page_next":       page.Next,
+				"deals_with_support":    pageDealsWithSupport,
+				"support_measures_page": pageSupportMeasures,
+			}).Info("full export deals page processed")
 			h.setStatus(func(s *exportStatus) {
 				s.Phase = "passport"
 				s.DealsProcessed = processed

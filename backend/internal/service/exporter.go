@@ -49,6 +49,9 @@ func (e *Exporter) BuildTasks(ctx context.Context, projects []models.ProjectRow,
 }
 
 func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	userCache := map[int]string{}
 	userMu := sync.Mutex{}
 	var tasks []models.TaskRow
@@ -66,7 +69,7 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 		workerCount = 1
 	}
 
-	jobs := make(chan models.ProjectRow)
+	jobs := make(chan models.ProjectRow, workerCount*2)
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 
@@ -163,6 +166,9 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 
 		localTasks := make([]models.TaskRow, 0, len(taskPool))
 		for _, t := range taskPool {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))
 			responsible := ""
 			if respID > 0 {
@@ -203,13 +209,22 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for p := range jobs {
-				if err := process(p); err != nil {
-					select {
-					case errCh <- err:
-					default:
-					}
+			for {
+				select {
+				case <-ctx.Done():
 					return
+				case p, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if err := process(p); err != nil {
+						select {
+						case errCh <- err:
+						default:
+						}
+						cancel()
+						return
+					}
 				}
 			}
 		}()
@@ -221,9 +236,17 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 			close(jobs)
 			wg.Wait()
 			return nil, stats, issues, err
-		default:
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			select {
+			case err := <-errCh:
+				return nil, stats, issues, err
+			default:
+				return nil, stats, issues, ctx.Err()
+			}
+		case jobs <- p:
 		}
-		jobs <- p
 	}
 	close(jobs)
 	wg.Wait()
@@ -267,6 +290,9 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 	projectToDeals := map[int][]models.ProjectRow{}
 	var unresolved []models.ProjectRow
 	for _, p := range projects {
+		if err := ctx.Err(); err != nil {
+			return nil, stats, issues, err
+		}
 		if p.ProjectID > 0 {
 			projectToDeals[p.ProjectID] = append(projectToDeals[p.ProjectID], p)
 		} else {
@@ -275,8 +301,14 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 	}
 
 	for projectID, deals := range projectToDeals {
+		if err := ctx.Err(); err != nil {
+			return nil, stats, issues, err
+		}
 		projectHasTasks := false
 		for _, d := range deals {
+			if err := ctx.Err(); err != nil {
+				return nil, stats, issues, err
+			}
 			projectTasks := projectTaskIndex[projectID]
 			dealTasks := dealTaskIndex[d.DealID]
 			taskPool := mergeTaskPools(dealTasks, projectTasks)
@@ -288,6 +320,9 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 			projectHasTasks = true
 			stats.DealsWithProject++
 			for _, t := range taskPool {
+				if err := ctx.Err(); err != nil {
+					return nil, stats, issues, err
+				}
 				respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))
 				responsible := ""
 				if respID > 0 {
@@ -325,12 +360,18 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 	// матчим только по уже загруженному общему пулу задач портала.
 	if len(unresolved) > 0 {
 		for _, d := range unresolved {
+			if err := ctx.Err(); err != nil {
+				return nil, stats, issues, err
+			}
 			dealTasks := dealTaskIndex[d.DealID]
 			if len(dealTasks) == 0 {
 				stats.DealsWithoutProject++
 				continue
 			}
 			for _, t := range dealTasks {
+				if err := ctx.Err(); err != nil {
+					return nil, stats, issues, err
+				}
 				respID := toInt(anyMapGet(t, "responsibleId", "RESPONSIBLE_ID"))
 				responsible := ""
 				if respID > 0 {
