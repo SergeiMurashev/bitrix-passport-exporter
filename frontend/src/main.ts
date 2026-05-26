@@ -84,16 +84,12 @@ root.innerHTML = `
   <div class="page">
     <main class="card">
       <div class="brand-row">
-        <img class="brand-logo brand-logo-dark" src="/invest-agent-logo-dark.png" alt="Инвестиционное агентство Курганской области" />
+        <img class="brand-logo" src="/invest-agent-logo-light.png" alt="Инвестиционное агентство Курганской области" />
       </div>
 
       <div class="card-head">
         <h1>Выгрузка паспорта проекта</h1>
-        <div class="top-controls">
-          <div id="top-user" class="top-user hidden">
-            <span id="top-user-login">Bitrix24</span>
-          </div>
-        </div>
+        <div class="top-controls"></div>
       </div>
       <p class="subtitle">Выберите режим и формат документа, затем скачайте готовый файл.</p>
 
@@ -144,8 +140,6 @@ root.innerHTML = `
 `
 
 const form = document.getElementById('export-form') as HTMLFormElement
-const topUser = document.getElementById('top-user') as HTMLDivElement
-const topUserLoginEl = document.getElementById('top-user-login') as HTMLSpanElement
 const idsWrap = document.getElementById('ids-wrap') as HTMLDivElement
 const fileWrap = document.getElementById('file-wrap') as HTMLDivElement
 const statusEl = document.getElementById('status') as HTMLParagraphElement
@@ -166,15 +160,9 @@ let exportFormat: ExportFormat = 'xlsx'
 let lastRunning = false
 let statusPollTimer: number | null = null
 
-function setAuthState(next: boolean, login = '') {
-  topUser.classList.toggle('hidden', !next)
+function setAuthState(next: boolean) {
   form.classList.toggle('hidden', !next)
   progressWrap.classList.toggle('hidden', !next)
-  if (next) {
-    topUserLoginEl.textContent = login || 'Bitrix24'
-    return
-  }
-  topUserLoginEl.textContent = 'Bitrix24'
   stopStatusPolling()
   setProgress(false)
 }
@@ -285,7 +273,7 @@ async function checkAuth(): Promise<boolean> {
   try {
     const current = await fetchPortalMe()
     if (current) {
-      setAuthState(true, current.user?.login || 'Bitrix24')
+      setAuthState(true)
       setStatus('', 'muted')
       return true
     }
@@ -301,7 +289,7 @@ async function checkAuth(): Promise<boolean> {
       setStatus('Не удалось инициализировать контекст Bitrix24. Перезапустите приложение из портала.', 'err')
       return false
     }
-    setAuthState(true, afterBootstrap.user?.login || 'Bitrix24')
+    setAuthState(true)
     setStatus('', 'muted')
     return true
   } catch (_err) {

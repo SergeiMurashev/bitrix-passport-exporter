@@ -48,18 +48,7 @@ body {
 .top-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.top-user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(223, 235, 252, 0.75);
-  font-size: 13px;
+  gap: 0;
 }
 
 h1 {
@@ -267,18 +256,6 @@ button.ghost.small {
 }
 
 @media (max-width: 640px) {
-  .top-user {
-    max-width: 160px;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
-  .top-user span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
   .brand-logo {
     height: 34px;
     max-width: min(100%, 270px);
