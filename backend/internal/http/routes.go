@@ -26,6 +26,10 @@ func (h *Handler) regStaticRoutes(mux *http.ServeMux) {
 	mux.Handle("/invest-agent-logo-dark.png", http.FileServer(http.Dir(frontendDistDir())))
 	mux.Handle("/invest-agent-logo-light.png", http.FileServer(http.Dir(frontendDistDir())))
 	mux.Handle("/logo1.png", http.FileServer(http.Dir(frontendDistDir())))
+	/* Маршруты для устанвоки на портал приложения */
+	mux.Handle("/bitrix/app", http.HandlerFunc(h.ui))
+	mux.Handle("/bitrix/install", http.HandlerFunc(h.ui))
+	/* Внутренний маршрут приложения */
 	mux.Handle("/", http.HandlerFunc(h.ui))
 }
 

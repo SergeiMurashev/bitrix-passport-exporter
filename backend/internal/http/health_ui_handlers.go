@@ -30,7 +30,7 @@ func (h *Handler) readyz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	if !isUIPath(r.URL.Path) {
 		http.NotFound(w, r)
 		return
 	}
@@ -58,4 +58,13 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(body)
+}
+
+func isUIPath(path string) bool {
+	switch path {
+	case "/", "/bitrix/app", "/bitrix/install":
+		return true
+	default:
+		return false
+	}
 }
