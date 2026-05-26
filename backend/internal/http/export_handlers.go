@@ -116,16 +116,43 @@ func (h *Handler) tryStartFullExport() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.fullExportBusy {
+		// Сеть безопасности: флаг занятости всегда должен соответствовать активному статусу.
+		// Если статус не работает, блокировка устарела и ее можно восстановить.
+		if !h.status.Running {
+			log.WithFields(log.Fields{
+				"phase":         h.status.Phase,
+				"started_at":    h.status.StartedAt,
+				"finished_at":   h.status.FinishedAt,
+				"last_error":    h.status.LastError,
+				"last_file":     h.status.LastFileName,
+				"cancel_marked": h.cancelRequestedByUser,
+			}).Warn("stale full export lock detected, resetting")
+			h.fullExportBusy = false
+			h.fullExportCancel = nil
+			h.cancelRequestedByUser = false
+		}
+	}
+	if h.fullExportBusy {
+		log.WithFields(log.Fields{
+			"phase":       h.status.Phase,
+			"started_at":  h.status.StartedAt,
+			"cancel_mark": h.cancelRequestedByUser,
+		}).Info("full export start rejected: already running")
 		return false
 	}
 	h.fullExportBusy = true
+	log.WithField("started_at", time.Now().UTC()).Info("full export lock acquired")
 	return true
 }
 
 func (h *Handler) finishFullExport() {
 	h.mu.Lock()
+	wasBusy := h.fullExportBusy
 	h.fullExportBusy = false
 	h.mu.Unlock()
+	if wasBusy {
+		log.WithField("finished_at", time.Now().UTC()).Info("full export lock released")
+	}
 }
 
 func (h *Handler) setExportCancel(cancel context.CancelFunc) {
