@@ -2,7 +2,6 @@ import './styles.css'
 
 type Mode = 'all' | 'ids' | 'file'
 type ExportFormat = 'xlsx' | 'docx'
-type ThemeMode = 'dark' | 'light'
 type ExportStatus = {
   running: boolean
   can_cancel?: boolean
@@ -86,7 +85,6 @@ root.innerHTML = `
     <main class="card">
       <div class="brand-row">
         <img class="brand-logo brand-logo-dark" src="/invest-agent-logo-dark.png" alt="Инвестиционное агентство Курганской области" />
-        <img class="brand-logo brand-logo-light" src="/invest-agent-logo-light.png" alt="Инвестиционное агентство Курганской области" />
       </div>
 
       <div class="card-head">
@@ -95,7 +93,6 @@ root.innerHTML = `
           <div id="top-user" class="top-user hidden">
             <span id="top-user-login">Bitrix24</span>
           </div>
-          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Переключить тему">☾</button>
         </div>
       </div>
       <p class="subtitle">Выберите режим и формат документа, затем скачайте готовый файл.</p>
@@ -158,7 +155,6 @@ const exportFormatEl = document.getElementById('export-format') as HTMLSelectEle
 const submitBtn = document.getElementById('submit') as HTMLButtonElement
 const cancelExportBtn = document.getElementById('cancel-export') as HTMLButtonElement
 const downloadLastBtn = document.getElementById('download-last') as HTMLButtonElement
-const themeToggleBtn = document.getElementById('theme-toggle') as HTMLButtonElement
 const progressWrap = document.getElementById('progress-wrap') as HTMLDivElement
 const progressBar = document.getElementById('progress-bar') as HTMLDivElement
 const progressPhase = document.getElementById('progress-phase') as HTMLSpanElement
@@ -168,7 +164,6 @@ const statusLinesEl = document.getElementById('status-lines') as HTMLDivElement
 let mode: Mode = 'all'
 let exportFormat: ExportFormat = 'xlsx'
 let lastRunning = false
-let themeMode: ThemeMode = 'dark'
 let statusPollTimer: number | null = null
 
 function setAuthState(next: boolean, login = '') {
@@ -198,21 +193,6 @@ function updateSubmitCaption() {
     return
   }
   submitBtn.textContent = 'Скачать документ в формате Excel'
-}
-
-function loadThemePreference(): ThemeMode {
-  const saved = window.localStorage.getItem('bp_theme_mode')
-  if (saved === 'light' || saved === 'dark') return saved
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
-}
-
-function applyTheme(next: ThemeMode) {
-  themeMode = next
-  document.body.classList.toggle('theme-light', next === 'light')
-  document.body.classList.toggle('theme-dark', next === 'dark')
-  themeToggleBtn.textContent = next === 'light' ? '☀' : '☾'
-  themeToggleBtn.setAttribute('aria-label', next === 'light' ? 'Включить тёмную тему' : 'Включить светлую тему')
-  window.localStorage.setItem('bp_theme_mode', next)
 }
 
 function getFilenameFromDisposition(contentDisposition: string | null): string | null {
@@ -460,10 +440,6 @@ form.addEventListener('change', (e) => {
   }
 })
 
-themeToggleBtn.addEventListener('click', () => {
-  applyTheme(themeMode === 'dark' ? 'light' : 'dark')
-})
-
 form.addEventListener('submit', async (e) => {
   e.preventDefault()
   submitBtn.disabled = true
@@ -674,7 +650,6 @@ document.addEventListener('visibilitychange', () => {
 })
 
 updateSubmitCaption()
-applyTheme(loadThemePreference())
 
 void (async () => {
   const ok = await checkAuth()
