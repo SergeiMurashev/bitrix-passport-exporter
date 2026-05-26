@@ -56,24 +56,18 @@ h1 {
   font-size: 26px;
 }
 
-.brand-row {
-  display: flex;
-  align-items: center;
-  min-height: 46px;
-  margin-bottom: 8px;
-}
-
-.brand-logo {
-  display: block;
-  height: 40px;
-  width: auto;
-  max-width: min(100%, 320px);
-  object-fit: contain;
-}
-
 .subtitle {
   margin: 0 0 12px;
   color: var(--muted);
+}
+
+#export-form,
+#progress-wrap,
+#status-card {
+  width: 100%;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .auth-panel {
@@ -256,11 +250,6 @@ button.ghost.small {
 }
 
 @media (max-width: 640px) {
-  .brand-logo {
-    height: 34px;
-    max-width: min(100%, 270px);
-  }
-
   h1 {
     font-size: 22px;
   }

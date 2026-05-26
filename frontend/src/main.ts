@@ -83,10 +83,6 @@ const root = document.getElementById('root') as HTMLDivElement
 root.innerHTML = `
   <div class="page">
     <main class="card">
-      <div class="brand-row">
-        <img class="brand-logo" src="/invest-agent-logo-dark.png" alt="Инвестиционное агентство Курганской области" />
-      </div>
-
       <div class="card-head">
         <h1>Выгрузка паспорта проекта</h1>
         <div class="top-controls"></div>
