@@ -84,7 +84,7 @@ root.innerHTML = `
   <div class="page">
     <main class="card">
       <div class="brand-row">
-        <img class="brand-logo" src="/invest-agent-logo-light.png" alt="Инвестиционное агентство Курганской области" />
+        <img class="brand-logo" src="/invest-agent-logo-dark.png" alt="Инвестиционное агентство Курганской области" />
       </div>
 
       <div class="card-head">
@@ -460,14 +460,10 @@ form.addEventListener('submit', async (e) => {
     setStatusLines([
       { label: 'Режим', value: mode === 'all' ? 'Все сделки' : mode === 'ids' ? 'По ID' : 'Из файла' },
       { label: 'Формат', value: (data?.format || exportFormat).toUpperCase() },
-      { label: 'Источник', value: data?.source || '-' },
-      { label: 'Файл', value: fileName },
-      { label: 'Размер', value: fileSize },
       { label: 'Сделок', value: stats.deals_total ?? '-' },
       { label: 'Задач', value: stats.tasks_total ?? '-' },
       { label: 'Сделок с мерами', value: stats.deals_with_support ?? '-' },
       { label: 'Мер поддержки', value: stats.support_measures_total ?? '-' },
-      { label: 'Предупреждений', value: data?.issues_count ?? 0 },
     ])
     downloadLastBtn.classList.remove('hidden')
     downloadLastBtn.textContent = `Скачать готовый файл (${fileName})`
@@ -579,7 +575,8 @@ async function refreshExportStatus() {
             'ok',
           )
           setStatusLines([
-            { label: 'Этап', value: humanizePhaseCode('completed') },
+            { label: 'Режим', value: mode === 'all' ? 'Все сделки' : mode === 'ids' ? 'По ID' : 'Из файла' },
+            { label: 'Формат', value: exportFormat.toUpperCase() },
             { label: 'Сделок', value: data.deals_total },
             { label: 'Задач', value: data.tasks_total },
             { label: 'Сделок с мерами', value: supportDeals },
