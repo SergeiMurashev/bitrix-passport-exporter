@@ -6,15 +6,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 	"github.com/xuri/excelize/v2"
-)
-
-var (
-	richFontNormal = &excelize.Font{Family: "Arial", Size: 11}
-	richFontBold   = &excelize.Font{Bold: true, Family: "Arial", Size: 11}
 )
 
 func BuildResultXLSX(projects []models.ProjectRow, tasks []models.TaskRow) ([]byte, error) {
@@ -80,18 +74,13 @@ func BuildResultXLSX(projects []models.ProjectRow, tasks []models.TaskRow) ([]by
 				{label: "Проектом предполагается:\n", value: description},
 				{label: "Информация о стадии и ходе реализации:\n", value: progress},
 			}
-			addLabeledRichText(f, sheet, fmt.Sprintf("B%d", row), projectParts)
-			addLabeledRichText(f, sheet, fmt.Sprintf("C%d", row), stageParts)
+			f.SetCellValue(sheet, fmt.Sprintf("B%d", row), renderLabeledText(projectParts))
+			f.SetCellValue(sheet, fmt.Sprintf("C%d", row), renderLabeledText(stageParts))
 			if taskText != "" {
 				f.SetCellValue(sheet, fmt.Sprintf("D%d", row), taskText)
 			}
 			if support != "" {
 				f.SetCellValue(sheet, fmt.Sprintf("E%d", row), support)
-			}
-			h := estimateRowHeight(projectParts, stageParts, taskText, support)
-			if err := f.SetRowHeight(sheet, row, h); err != nil {
-				// Защита от ограничений Excel/Numbers по высоте строки.
-				_ = f.SetRowHeight(sheet, row, 409)
 			}
 			num++
 			row++
@@ -258,116 +247,25 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int, sectionRows
 	return nil
 }
 
-func addLabeledRichText(f *excelize.File, sheet, cell string, parts []textPart) {
-	runs := make([]excelize.RichTextRun, 0, len(parts)*2)
-	for i, p := range parts {
-		if strings.TrimSpace(p.label) != "" {
-			runs = append(runs, excelize.RichTextRun{
-				Text: p.label,
-				Font: richFontBold,
-			})
-		}
-		valueText := strings.TrimSpace(p.value)
-		if i < len(parts)-1 {
-			valueText += "\n"
-		}
-		runs = append(runs, excelize.RichTextRun{
-			Text: valueText,
-			Font: choosePartFont(p.bold),
-		})
-	}
-	if len(runs) > 0 {
-		_ = f.SetCellRichText(sheet, cell, runs)
-	}
-}
-
-func choosePartFont(isBold bool) *excelize.Font {
-	if isBold {
-		return richFontBold
-	}
-	return richFontNormal
-}
-
 type textPart struct {
 	label string
 	value string
 	bold  bool
 }
 
-// Функция по оценки высоты строк
-func estimateRowHeight(projectParts, stageParts []textPart, taskText, supportText string) float64 {
-	// Приблизительно округляю строки по ширине столбца, чтобы пользователям не приходилось растягивать их вручную.
-	// В Numbers/Excel авто-подбор высоты для rich text работает по-разному,
-	// поэтому берем более "консервативную" оценку и допускаем большие значения.
-	lines := wrappedTextLinesParts(projectParts, 42)
-	if v := wrappedTextLinesParts(stageParts, 42); v > lines {
-		lines = v
-	}
-	if v := wrappedTextLines(taskText, 42); v > lines {
-		lines = v
-	}
-	if v := wrappedTextLines(supportText, 34); v > lines {
-		lines = v
-	}
-	if lines < 3 {
-		lines = 3
-	}
-	if lines > 30 {
-		lines = 30
-	}
-	h := float64(lines)*13 + 8
-	if h > 409 {
-		return 409
-	}
-	return h
-}
-
-func wrappedTextLinesParts(parts []textPart, charsPerLine int) int {
-	if charsPerLine <= 0 {
-		charsPerLine = 52
-	}
-	total := 0
+func renderLabeledText(parts []textPart) string {
+	lines := make([]string, 0, len(parts))
 	for _, p := range parts {
-		line := strings.TrimSpace(p.label) + strings.TrimSpace(p.value)
-		total += wrappedLineSegments(line, charsPerLine)
-	}
-	if total < 1 {
-		return 1
-	}
-	return total
-}
-
-func wrappedTextLines(s string, charsPerLine int) int {
-	if charsPerLine <= 0 {
-		charsPerLine = 52
-	}
-	if strings.TrimSpace(s) == "" {
-		return 0
-	}
-	total := 0
-	start := 0
-	for i := 0; i <= len(s); i++ {
-		if i < len(s) && s[i] != '\n' {
+		label := p.label
+		value := strings.TrimSpace(p.value)
+		if label == "" && value == "" {
 			continue
 		}
-		line := strings.TrimSpace(s[start:i])
-		total += wrappedLineSegments(line, charsPerLine)
-		start = i + 1
+		line := label + value
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines = append(lines, line)
 	}
-	if total < 1 {
-		return 1
-	}
-	return total
-}
-
-func wrappedLineSegments(line string, charsPerLine int) int {
-	if strings.TrimSpace(line) == "" {
-		return 1
-	}
-	runeCount := utf8.RuneCountInString(line)
-	segments := (runeCount + charsPerLine - 1) / charsPerLine
-	if segments < 1 {
-		return 1
-	}
-	return segments
+	return strings.Join(lines, "\n")
 }

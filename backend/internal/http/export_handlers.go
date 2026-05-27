@@ -278,29 +278,46 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Lock()
 	cancel := h.fullExportCancel
-	if !h.status.Running || cancel == nil {
+	running := h.status.Running
+	alreadyRequested := h.cancelRequestedByUser
+	phase := h.status.Phase
+	if running {
+		h.cancelRequestedByUser = true
+		h.status.CancelRequested = true
 		h.mu.Unlock()
-		writeMappedError(w, errNoExportRunning, "no export is running")
+
+		if cancel != nil && !alreadyRequested {
+			cancel()
+			log.Info("full export cancel requested by user")
+		}
+
+		writeAPISuccess(
+			w,
+			http.StatusAccepted,
+			"cancel_requested",
+			"Запрос на отмену выгрузки отправлен",
+			models.CancelExportData{CancelRequested: true},
+			nil,
+		)
 		return
 	}
-	alreadyRequested := h.cancelRequestedByUser
-	h.cancelRequestedByUser = true
-	h.status.CancelRequested = true
-	h.mu.Unlock()
 
-	if !alreadyRequested {
-		cancel()
-		log.Info("full export cancel requested by user")
+	// Если процесс уже не отмечен как running, но отмена раньше уже была запрошена,
+	// возвращаем идемпотентный ответ вместо ложного конфликта.
+	if alreadyRequested || strings.EqualFold(phase, "tasks") || strings.EqualFold(phase, "passport") {
+		h.mu.Unlock()
+		writeAPISuccess(
+			w,
+			http.StatusAccepted,
+			"cancel_requested",
+			"Отмена уже запрошена, дождитесь завершения",
+			models.CancelExportData{CancelRequested: true},
+			nil,
+		)
+		return
 	}
-
-	writeAPISuccess(
-		w,
-		http.StatusAccepted,
-		"cancel_requested",
-		"Запрос на отмену выгрузки отправлен",
-		models.CancelExportData{CancelRequested: true},
-		nil,
-	)
+	h.mu.Unlock()
+	writeMappedError(w, errNoExportRunning, "no export is running")
 }
 
 func isCanceledErr(err error) bool {
