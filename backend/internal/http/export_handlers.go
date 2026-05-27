@@ -245,6 +245,9 @@ func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	h.mu.Lock()
 	status := h.status
 	h.mu.Unlock()
@@ -278,46 +281,46 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Lock()
 	cancel := h.fullExportCancel
+	busy := h.fullExportBusy
 	running := h.status.Running
 	alreadyRequested := h.cancelRequestedByUser
 	phase := h.status.Phase
-	if running {
-		h.cancelRequestedByUser = true
-		h.status.CancelRequested = true
-		h.mu.Unlock()
+	active := running || busy || strings.EqualFold(phase, "tasks") || strings.EqualFold(phase, "passport")
+	h.cancelRequestedByUser = true
+	h.status.CancelRequested = true
 
-		if cancel != nil && !alreadyRequested {
-			cancel()
-			log.Info("full export cancel requested by user")
-		}
-
-		writeAPISuccess(
-			w,
-			http.StatusAccepted,
-			"cancel_requested",
-			"Запрос на отмену выгрузки отправлен",
-			models.CancelExportData{CancelRequested: true},
-			nil,
-		)
-		return
-	}
-
-	// Если процесс уже не отмечен как running, но отмена раньше уже была запрошена,
-	// возвращаем идемпотентный ответ вместо ложного конфликта.
-	if alreadyRequested || strings.EqualFold(phase, "tasks") || strings.EqualFold(phase, "passport") {
-		h.mu.Unlock()
-		writeAPISuccess(
-			w,
-			http.StatusAccepted,
-			"cancel_requested",
-			"Отмена уже запрошена, дождитесь завершения",
-			models.CancelExportData{CancelRequested: true},
-			nil,
-		)
-		return
+	// Жесткий fallback для рассинхрона:
+	// если lock занят, но cancel func потерян и running=false, сбрасываем lock.
+	if busy && !running && cancel == nil {
+		h.fullExportBusy = false
+		h.status.Running = false
+		h.status.CanCancel = false
+		h.status.Phase = "canceled"
+		h.status.LastError = "export canceled by user (forced reset)"
+		h.status.FinishedAt = time.Now().UTC()
+		log.WithFields(log.Fields{
+			"phase": phase,
+		}).Warn("forced full export lock reset on cancel request")
 	}
 	h.mu.Unlock()
-	writeMappedError(w, errNoExportRunning, "no export is running")
+
+	if cancel != nil && !alreadyRequested {
+		cancel()
+		log.Info("full export cancel requested by user")
+	}
+
+	message := "Запрос на отмену выгрузки отправлен"
+	if !active && !alreadyRequested {
+		message = "Активная выгрузка не обнаружена, состояние отмены зафиксировано"
+	}
+	writeAPISuccess(
+		w,
+		http.StatusAccepted,
+		"cancel_requested",
+		message,
+		models.CancelExportData{CancelRequested: true},
+		nil,
+	)
 }
 
 func isCanceledErr(err error) bool {

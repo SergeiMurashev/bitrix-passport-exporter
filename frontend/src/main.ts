@@ -15,6 +15,8 @@ type ExportStatus = {
   has_last_result: boolean
   last_file_name?: string
   last_error?: string
+  started_at?: string
+  finished_at?: string
 }
 type ApiError = {
   code?: string
@@ -155,6 +157,13 @@ let mode: Mode = 'all'
 let exportFormat: ExportFormat = 'xlsx'
 let lastRunning = false
 let statusPollTimer: number | null = null
+let statusFetchSeq = 0
+let statusAppliedSeq = 0
+let liveRunKey = ''
+let liveDealsProcessed = 0
+let liveTasksTotal = 0
+let liveDealsWithSupport = 0
+let liveSupportMeasuresTotal = 0
 
 function setAuthState(next: boolean) {
   form.classList.toggle('hidden', !next)
@@ -527,17 +536,49 @@ downloadLastBtn.addEventListener('click', () => {
 
 async function refreshExportStatus() {
   try {
-    const res = await fetch('/api/export/status')
+    const seq = ++statusFetchSeq
+    const res = await fetch(`/api/export/status?_=${Date.now()}`, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+    })
     if (res.status === 401) {
       setAuthState(false)
       setStatus('Сессия портала истекла. Откройте приложение из Bitrix24 повторно.', 'err')
       return
     }
     if (!res.ok) return
+    if (seq < statusAppliedSeq) return
+    statusAppliedSeq = seq
     const payload = await res.json() as ApiResponse<ExportStatus> | ExportStatus
     const data = unwrapApiData<ExportStatus>(payload)
 
     if (data.running) {
+      const runKey = (data.started_at || '').trim() || 'active-run'
+      let dealsProcessed = Number(data.deals_processed) || 0
+      let tasksTotal = Number(data.tasks_total) || 0
+      let dealsWithSupport = Number(data.deals_with_support ?? 0) || 0
+      let supportMeasures = Number(data.support_measures_total ?? 0) || 0
+
+      if (runKey !== liveRunKey) {
+        liveRunKey = runKey
+        liveDealsProcessed = dealsProcessed
+        liveTasksTotal = tasksTotal
+        liveDealsWithSupport = dealsWithSupport
+        liveSupportMeasuresTotal = supportMeasures
+      } else {
+        dealsProcessed = Math.max(dealsProcessed, liveDealsProcessed)
+        tasksTotal = Math.max(tasksTotal, liveTasksTotal)
+        dealsWithSupport = Math.max(dealsWithSupport, liveDealsWithSupport)
+        supportMeasures = Math.max(supportMeasures, liveSupportMeasuresTotal)
+        liveDealsProcessed = dealsProcessed
+        liveTasksTotal = tasksTotal
+        liveDealsWithSupport = dealsWithSupport
+        liveSupportMeasuresTotal = supportMeasures
+      }
+
       submitBtn.disabled = true
       submitBtn.textContent = 'Формируем...'
       downloadLastBtn.classList.add('hidden')
@@ -550,21 +591,24 @@ async function refreshExportStatus() {
       }
       setProgress(true, detectPhase(data))
       const total = data.deals_total > 0 ? data.deals_total : '?'
-      const supportDeals = data.deals_with_support ?? 0
-      const supportMeasures = data.support_measures_total ?? 0
       setStatus(
-        `Выполняется выгрузка: сделки ${data.deals_processed}/${total}, задачи ${data.tasks_total}, ` +
-        `сделок с мерами ${supportDeals}, мер поддержки ${supportMeasures}.`,
+        `Выполняется выгрузка: сделки ${dealsProcessed}/${total}, задачи ${tasksTotal}, ` +
+        `сделок с мерами ${dealsWithSupport}, мер поддержки ${supportMeasures}.`,
         'muted',
       )
       setStatusLines([
         { label: 'Этап', value: humanizePhaseCode(data.phase) },
-        { label: 'Сделок обработано', value: `${data.deals_processed}/${total}` },
-        { label: 'Задач', value: data.tasks_total },
-        { label: 'Сделок с мерами', value: supportDeals },
+        { label: 'Сделок обработано', value: `${dealsProcessed}/${total}` },
+        { label: 'Задач', value: tasksTotal },
+        { label: 'Сделок с мерами', value: dealsWithSupport },
         { label: 'Мер поддержки', value: supportMeasures },
       ])
     } else {
+      liveRunKey = ''
+      liveDealsProcessed = 0
+      liveTasksTotal = 0
+      liveDealsWithSupport = 0
+      liveSupportMeasuresTotal = 0
       setProgress(false)
       if (lastRunning) {
         if (data.last_error) {
