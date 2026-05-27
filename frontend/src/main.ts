@@ -465,14 +465,26 @@ form.addEventListener('submit', async (e) => {
     downloadLastBtn.textContent = `Скачать готовый файл (${fileName})`
     setProgress(false)
   } catch (error) {
-    setStatus(humanizeError((error as Error).message || ''), 'err')
-    setStatusLines([])
-    setProgress(false)
+    const errorText = humanizeError((error as Error).message || '')
+    await refreshExportStatus()
+    if (!lastRunning) {
+      setStatus(errorText, 'err')
+      setStatusLines([])
+      setProgress(false)
+    } else {
+      setStatus('Запрос из браузера прервался, но выгрузка продолжается на сервере. Дождитесь завершения или нажмите «Отменить выгрузку».', 'muted')
+    }
   } finally {
-    submitBtn.disabled = false
-    updateSubmitCaption()
-    cancelExportBtn.classList.add('hidden')
-    cancelExportBtn.disabled = false
+    if (!lastRunning) {
+      submitBtn.disabled = false
+      updateSubmitCaption()
+      cancelExportBtn.classList.add('hidden')
+      cancelExportBtn.disabled = false
+      cancelExportBtn.textContent = 'Отменить выгрузку'
+    } else {
+      submitBtn.disabled = true
+      submitBtn.textContent = 'Формируем...'
+    }
   }
 })
 
