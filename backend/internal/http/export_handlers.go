@@ -419,6 +419,34 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
 		log.WithError(err).Warn("download last export write failed")
+		return
+	}
+	if h.cfg.DeleteLastExportAfterDownload {
+		h.consumeLastResult(path)
+	}
+}
+
+func (h *Handler) consumeLastResult(path string) {
+	cleanPath := strings.TrimSpace(path)
+	if cleanPath == "" {
+		return
+	}
+
+	h.mu.Lock()
+	if h.lastResultPath != cleanPath {
+		h.mu.Unlock()
+		return
+	}
+	h.lastResultPath = ""
+	h.lastFilename = ""
+	h.lastContentType = ""
+	h.lastUpdatedAt = time.Time{}
+	h.status.HasLastResult = false
+	h.status.LastFileName = ""
+	h.mu.Unlock()
+
+	if err := os.Remove(cleanPath); err != nil && !os.IsNotExist(err) {
+		log.WithError(err).WithField("path", cleanPath).Warn("failed to remove consumed last export file")
 	}
 }
 

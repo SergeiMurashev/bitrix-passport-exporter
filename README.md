@@ -49,6 +49,7 @@ docker compose up -d --build
 - `BITRIX_APP_CLIENT_SECRET` (обязателен, Application key portal app)
 - `TASK_WORKERS` (default `10`)
 - `TASK_STRATEGY` (`per_deal` или `bulk`)
+- `DELETE_LAST_EXPORT_AFTER_DOWNLOAD` (default `false`; если `true`, файл удаляется после первого успешного скачивания)
 - `HTTP_READ_TIMEOUT_SECONDS` (default `20`)
 - `HTTP_WRITE_TIMEOUT_SECONDS` (default `3600`)
 - `HTTP_IDLE_TIMEOUT_SECONDS` (default `120`)

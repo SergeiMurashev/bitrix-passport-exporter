@@ -11,38 +11,40 @@ import (
 )
 
 type Config struct {
-	Addr                     string
-	BitrixAppClientID        string
-	BitrixAppClientSecret    string
-	TaskWorkers              int
-	TaskStrategy             string
-	HTTPReadTimeoutSeconds   int
-	HTTPWriteTimeoutSeconds  int
-	HTTPIdleTimeoutSeconds   int
-	HTTPShutdownTimeoutSecs  int
-	RateLimitExportPerMinute int
-	SupportLinkDealField     string
-	SupportMeasureValueField string
-	APIAccessToken           string
+	Addr                          string
+	BitrixAppClientID             string
+	BitrixAppClientSecret         string
+	TaskWorkers                   int
+	TaskStrategy                  string
+	DeleteLastExportAfterDownload bool
+	HTTPReadTimeoutSeconds        int
+	HTTPWriteTimeoutSeconds       int
+	HTTPIdleTimeoutSeconds        int
+	HTTPShutdownTimeoutSecs       int
+	RateLimitExportPerMinute      int
+	SupportLinkDealField          string
+	SupportMeasureValueField      string
+	APIAccessToken                string
 }
 
 func Load() Config {
 	loadDotEnvIfPresent()
 
 	return Config{
-		Addr:                     env("ADDR", ":25504"),
-		BitrixAppClientID:        env("BITRIX_APP_CLIENT_ID", ""),
-		BitrixAppClientSecret:    env("BITRIX_APP_CLIENT_SECRET", ""),
-		TaskWorkers:              envInt("TASK_WORKERS", 10),
-		TaskStrategy:             env("TASK_STRATEGY", "per_deal"),
-		HTTPReadTimeoutSeconds:   envInt("HTTP_READ_TIMEOUT_SECONDS", 20),
-		HTTPWriteTimeoutSeconds:  envInt("HTTP_WRITE_TIMEOUT_SECONDS", 3600),
-		HTTPIdleTimeoutSeconds:   envInt("HTTP_IDLE_TIMEOUT_SECONDS", 120),
-		HTTPShutdownTimeoutSecs:  envInt("HTTP_SHUTDOWN_TIMEOUT_SECONDS", 20),
-		RateLimitExportPerMinute: envIntAllowZero("RATE_LIMIT_EXPORT_PER_MINUTE", 6),
-		SupportLinkDealField:     env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
-		SupportMeasureValueField: env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
-		APIAccessToken:           env("API_ACCESS_TOKEN", ""),
+		Addr:                          env("ADDR", ":25504"),
+		BitrixAppClientID:             env("BITRIX_APP_CLIENT_ID", ""),
+		BitrixAppClientSecret:         env("BITRIX_APP_CLIENT_SECRET", ""),
+		TaskWorkers:                   envInt("TASK_WORKERS", 10),
+		TaskStrategy:                  env("TASK_STRATEGY", "per_deal"),
+		DeleteLastExportAfterDownload: envBool("DELETE_LAST_EXPORT_AFTER_DOWNLOAD", false),
+		HTTPReadTimeoutSeconds:        envInt("HTTP_READ_TIMEOUT_SECONDS", 20),
+		HTTPWriteTimeoutSeconds:       envInt("HTTP_WRITE_TIMEOUT_SECONDS", 3600),
+		HTTPIdleTimeoutSeconds:        envInt("HTTP_IDLE_TIMEOUT_SECONDS", 120),
+		HTTPShutdownTimeoutSecs:       envInt("HTTP_SHUTDOWN_TIMEOUT_SECONDS", 20),
+		RateLimitExportPerMinute:      envIntAllowZero("RATE_LIMIT_EXPORT_PER_MINUTE", 6),
+		SupportLinkDealField:          env("SUPPORT_LINK_DEAL_FIELD", "UF_CRM_1770268007"),
+		SupportMeasureValueField:      env("SUPPORT_MEASURE_VALUE_FIELD", "UF_CRM_1744702884242"),
+		APIAccessToken:                env("API_ACCESS_TOKEN", ""),
 	}
 }
 
