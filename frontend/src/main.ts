@@ -435,6 +435,7 @@ form.addEventListener('change', (e) => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault()
+  let keepUiLocked = false
   submitBtn.disabled = true
   submitBtn.textContent = 'Формируем...'
   cancelExportBtn.classList.remove('hidden')
@@ -473,6 +474,19 @@ form.addEventListener('submit', async (e) => {
     downloadLastBtn.classList.remove('hidden')
     downloadLastBtn.textContent = `Скачать готовый файл (${fileName})`
     setProgress(false)
+    // Принудительно переводим UI в idle после успешного ответа /api/export.
+    // Сервер уже завершил выгрузку, значит блокировка кнопок больше не нужна.
+    lastRunning = false
+    liveRunKey = ''
+    liveDealsProcessed = 0
+    liveTasksTotal = 0
+    liveDealsWithSupport = 0
+    liveSupportMeasuresTotal = 0
+    submitBtn.disabled = false
+    updateSubmitCaption()
+    cancelExportBtn.classList.add('hidden')
+    cancelExportBtn.disabled = false
+    cancelExportBtn.textContent = 'Отменить выгрузку'
   } catch (error) {
     const errorText = humanizeError((error as Error).message || '')
     await refreshExportStatus()
@@ -481,10 +495,11 @@ form.addEventListener('submit', async (e) => {
       setStatusLines([])
       setProgress(false)
     } else {
+      keepUiLocked = true
       setStatus('Запрос из браузера прервался, но выгрузка продолжается на сервере. Дождитесь завершения или нажмите «Отменить выгрузку».', 'muted')
     }
   } finally {
-    if (!lastRunning) {
+    if (!keepUiLocked) {
       submitBtn.disabled = false
       updateSubmitCaption()
       cancelExportBtn.classList.add('hidden')
