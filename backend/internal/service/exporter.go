@@ -10,6 +10,7 @@ import (
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/bitrix"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
+	log "github.com/sirupsen/logrus"
 )
 
 type Exporter struct {
@@ -275,6 +276,7 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 		}
 		return nil, stats, issues, fmt.Errorf("failed to load all tasks: %w", err)
 	}
+	log.WithField("tasks_loaded_total", len(allTasks)).Info("bulk tasks pool loaded")
 	dealTaskIndex := map[int][]map[string]any{}
 	projectTaskIndex := map[int][]map[string]any{}
 	for _, t := range allTasks {
@@ -299,6 +301,12 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 			unresolved = append(unresolved, p)
 		}
 	}
+	log.WithFields(log.Fields{
+		"deals_total":           len(projects),
+		"deals_with_project":    len(projects) - len(unresolved),
+		"deals_without_project": len(unresolved),
+		"projects_unique":       len(projectToDeals),
+	}).Info("bulk task matching scope prepared")
 
 	for projectID, deals := range projectToDeals {
 		if err := ctx.Err(); err != nil {

@@ -573,6 +573,10 @@ func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string
 		all = append(all, chunk...)
 
 		next := toInt(fmt.Sprintf("%v", resultMap["next"]))
+		if next == 0 && len(chunk) > 0 {
+			// For some clients top-level `next` can be missing; fallback to offset pagination.
+			next = start + len(chunk)
+		}
 		if next == 0 || next <= start || len(chunk) == 0 {
 			break
 		}
@@ -651,6 +655,10 @@ func (c *Client) GetAllTasks(ctx context.Context) ([]map[string]any, error) {
 		if next == 0 {
 			next = toInt(fmt.Sprintf("%v", resultMap["next"]))
 		}
+		if next == 0 && len(chunk) > 0 {
+			// For some clients top-level `next` can be missing; fallback to offset pagination.
+			next = start + len(chunk)
+		}
 		if next == 0 || next <= start || len(chunk) == 0 {
 			break
 		}
@@ -689,6 +697,10 @@ func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([
 		next := toInt(toString(resp.Next))
 		if next == 0 {
 			next = toInt(fmt.Sprintf("%v", resultMap["next"]))
+		}
+		if next == 0 && len(chunk) > 0 {
+			// For some clients top-level `next` can be missing; fallback to offset pagination.
+			next = start + len(chunk)
 		}
 		if next == 0 || next <= start || len(chunk) == 0 {
 			break
