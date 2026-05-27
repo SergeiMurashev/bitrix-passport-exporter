@@ -164,7 +164,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponseDealsIDsData"
         "400":
-          description: Invalid webhook
+          description: Portal session/context is missing or invalid
           content:
             application/json:
               schema:
@@ -188,7 +188,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponseDealsFieldsData"
         "400":
-          description: Invalid webhook
+          description: Portal session/context is missing or invalid
           content:
             application/json:
               schema:
@@ -301,7 +301,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiErrorResponse"
         "502":
-          description: Bitrix webhook/auth/backend error
+          description: Bitrix portal auth/backend error
           content:
             application/json:
               schema:

@@ -1,14 +1,9 @@
 package bitrix
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,10 +14,7 @@ import (
 )
 
 type Client struct {
-	endpoint                 string
-	baseURL                  string
 	bix                      *bixgo.Client
-	http                     *http.Client
 	supportLinkDealField     string
 	supportMeasureValueField string
 }
@@ -73,32 +65,6 @@ type bitrixResponse struct {
 	Desc   string `json:"error_description"`
 }
 
-// NewFromWebhook создает новый клиент Bitrix24, используя URL вебхука как follback.
-func NewFromWebhook(webhook string) (*Client, error) {
-	u, err := url.Parse(strings.TrimSpace(webhook))
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 3 || parts[0] != "rest" {
-		return nil, fmt.Errorf("unexpected webhook path: %s", u.Path)
-	}
-	baseURL := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
-	authToken := fmt.Sprintf("%s/%s", parts[1], parts[2])
-	auth := bixgo.NewClientAuth(authToken, "", time.Now().Add(365*24*time.Hour), "", "")
-	bixClient := bixgo.NewClientWithTimeout(baseURL, auth, 90*time.Second)
-	endpoint := fmt.Sprintf("%s://%s/rest/%s/%s", u.Scheme, u.Host, parts[1], parts[2])
-	return &Client{
-		baseURL:  baseURL,
-		bix:      bixClient,
-		endpoint: endpoint,
-		http: &http.Client{
-			Timeout: 90 * time.Second,
-		},
-		supportMeasureValueField: dealFieldSupportMeasure,
-	}, nil
-}
-
 // NewFromPortalSession создает новый клиент Bitrix24, используя данные сеанса портала.
 func NewFromPortalSession(
 	domain,
@@ -128,11 +94,7 @@ func NewFromPortalSession(
 		strings.TrimSpace(clientSecret),
 	)
 	return &Client{
-		baseURL: baseURL,
-		bix:     bixgo.NewClientWithTimeout(baseURL, auth, 90*time.Second),
-		http: &http.Client{
-			Timeout: 90 * time.Second,
-		},
+		bix:                      bixgo.NewClientWithTimeout(baseURL, auth, 90*time.Second),
 		supportMeasureValueField: dealFieldSupportMeasure,
 	}, nil
 }
@@ -656,7 +618,6 @@ func (c *Client) GetAllTasks(ctx context.Context) ([]map[string]any, error) {
 			next = toInt(fmt.Sprintf("%v", resultMap["next"]))
 		}
 		if next == 0 && len(chunk) > 0 {
-			// For some clients top-level `next` can be missing; fallback to offset pagination.
 			next = start + len(chunk)
 		}
 		if next == 0 || next <= start || len(chunk) == 0 {
@@ -699,7 +660,6 @@ func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([
 			next = toInt(fmt.Sprintf("%v", resultMap["next"]))
 		}
 		if next == 0 && len(chunk) > 0 {
-			// For some clients top-level `next` can be missing; fallback to offset pagination.
 			next = start + len(chunk)
 		}
 		if next == 0 || next <= start || len(chunk) == 0 {
@@ -737,7 +697,7 @@ func (c *Client) callWithRetry(ctx context.Context, method string, params map[st
 	var lastErr error
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		resp, err := c.call(ctx, method, params)
+		resp, err := c.callViaBixgo(ctx, method, params)
 		if err == nil {
 			return resp, nil
 		}
@@ -754,59 +714,6 @@ func (c *Client) callWithRetry(ctx context.Context, method string, params map[st
 	}
 
 	return nil, lastErr
-}
-
-func (c *Client) call(ctx context.Context, method string, params map[string]any) (*bitrixResponse, error) {
-	if c.bix != nil {
-		return c.callViaBixgo(ctx, method, params)
-	}
-	endpoint := fmt.Sprintf("%s/%s.json", c.endpoint, method)
-
-	var body io.Reader
-	if params != nil {
-		b, err := json.Marshal(params)
-		if err != nil {
-			return nil, fmt.Errorf("marshal params: %w", err)
-		}
-		body = bytes.NewBuffer(b)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	var out bitrixResponse
-	_ = json.Unmarshal(payload, &out)
-	if resp.StatusCode != http.StatusOK {
-		if out.Error != "" || out.Desc != "" {
-			return nil, fmt.Errorf("bitrix %s http %d: %s (%s)", method, resp.StatusCode, out.Error, out.Desc)
-		}
-		return nil, fmt.Errorf("bitrix %s http %d: %s", method, resp.StatusCode, string(payload))
-	}
-	if err := json.Unmarshal(payload, &out); err != nil {
-		return nil, fmt.Errorf("decode response for %s: %w", method, err)
-	}
-	if out.Error != "" {
-		if out.Desc != "" {
-			return nil, fmt.Errorf("bitrix %s error: %s (%s)", method, out.Error, out.Desc)
-		}
-		return nil, fmt.Errorf("bitrix %s error: %s", method, out.Error)
-	}
-
-	return &out, nil
 }
 
 func (c *Client) callViaBixgo(ctx context.Context, method string, params map[string]any) (*bitrixResponse, error) {
@@ -1169,8 +1076,6 @@ func enumValue(enumLabels map[string]map[string]string, fieldCode, raw string) s
 		if label, ok := byField[v]; ok {
 			return label
 		}
-		// Some Bitrix enum fields can return numeric IDs with insignificant formatting differences.
-		// Try normalized integer key as a safe fallback.
 		if iv := toInt(v); iv > 0 {
 			if label, ok := byField[strconv.Itoa(iv)]; ok {
 				return label

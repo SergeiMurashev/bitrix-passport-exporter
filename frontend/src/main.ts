@@ -196,7 +196,6 @@ function getFilenameFromDisposition(contentDisposition: string | null): string |
     try {
       return decodeURIComponent(utf8Match[1].trim())
     } catch (_err) {
-      // ignore
     }
   }
   const plainMatch = contentDisposition.match(/filename="([^"]+)"/i)
@@ -340,7 +339,6 @@ async function bootstrapPortalSessionFromBX24(): Promise<boolean> {
   return res.ok
 }
 
-// Словарь уведомлений
 function humanizeError(message: string): string {
   const text = (message || '').toLowerCase().trim()
   if (!text) return 'Не удалось сформировать файл. Повторите попытку.'
@@ -363,7 +361,7 @@ function humanizeError(message: string): string {
       userText: 'Некорректный формат ID сделки. Укажите одно или несколько положительных чисел через запятую.',
     },
     {
-      test: (t) => t.includes('invalid webhook') || t.includes('auth token is invalid or expired'),
+      test: (t) => t.includes('auth token is invalid or expired'),
       userText: 'Ошибка доступа к Bitrix24: токен портала недействителен или истек.',
     },
     {
@@ -479,8 +477,6 @@ form.addEventListener('submit', async (e) => {
     downloadLastBtn.classList.remove('hidden')
     downloadLastBtn.textContent = `Скачать готовый файл (${fileName})`
     setProgress(false)
-    // Принудительно переводим UI в idle после успешного ответа /api/export.
-    // Сервер уже завершил выгрузку, значит блокировка кнопок больше не нужна.
     lastRunning = false
     liveRunKey = ''
     liveDealsProcessed = 0
@@ -668,7 +664,6 @@ async function refreshExportStatus() {
     }
     lastRunning = data.running
   } catch (_err) {
-    // no-op
   }
 }
 
