@@ -115,7 +115,7 @@ root.innerHTML = `
         </div>
 
         <div class="actions">
-          <button id="submit" type="submit">Скачать документ в формате Excel</button>
+          <button id="submit" type="submit">Сформировать документ в формате Excel</button>
           <button id="cancel-export" class="danger hidden" type="button">Отменить выгрузку</button>
         </div>
         <button id="download-last" class="hidden" type="button">Скачать готовый файл</button>
@@ -182,10 +182,10 @@ function setMode(next: Mode) {
 
 function updateSubmitCaption() {
   if (exportFormat === 'docx') {
-    submitBtn.textContent = 'Скачать документ в формате Word'
+    submitBtn.textContent = 'Сформировать документ в формате Word'
     return
   }
-  submitBtn.textContent = 'Скачать документ в формате Excel'
+  submitBtn.textContent = 'Сформировать документ в формате Excel'
 }
 
 function getFilenameFromDisposition(contentDisposition: string | null): string | null {
@@ -464,7 +464,6 @@ form.addEventListener('submit', async (e) => {
       'ok',
     )
     setStatusLines([
-      { label: 'Режим', value: mode === 'all' ? 'Все сделки' : mode === 'ids' ? 'По ID' : 'Из файла' },
       { label: 'Формат', value: (data?.format || exportFormat).toUpperCase() },
       { label: 'Сделок', value: stats.deals_total ?? '-' },
       { label: 'Задач', value: stats.tasks_total ?? '-' },
@@ -607,16 +606,11 @@ async function refreshExportStatus() {
       setProgress(true, detectPhase(data))
       const total = data.deals_total > 0 ? data.deals_total : '?'
       setStatus(
-        `Выполняется выгрузка: сделки ${dealsProcessed}/${total}, задачи ${tasksTotal}, ` +
-        `сделок с мерами ${dealsWithSupport}, мер поддержки ${supportMeasures}.`,
+        `Выполняется выгрузка. Текущий этап: ${humanizePhaseCode(data.phase)}.`,
         'muted',
       )
       setStatusLines([
-        { label: 'Этап', value: humanizePhaseCode(data.phase) },
-        { label: 'Сделок обработано', value: `${dealsProcessed}/${total}` },
-        { label: 'Задач', value: tasksTotal },
-        { label: 'Сделок с мерами', value: dealsWithSupport },
-        { label: 'Мер поддержки', value: supportMeasures },
+        { label: 'Режим', value: humanizePhaseCode(data.phase) },
       ])
     } else {
       liveRunKey = ''
@@ -642,7 +636,6 @@ async function refreshExportStatus() {
             'ok',
           )
           setStatusLines([
-            { label: 'Режим', value: mode === 'all' ? 'Все сделки' : mode === 'ids' ? 'По ID' : 'Из файла' },
             { label: 'Формат', value: exportFormat.toUpperCase() },
             { label: 'Сделок', value: data.deals_total },
             { label: 'Задач', value: data.tasks_total },

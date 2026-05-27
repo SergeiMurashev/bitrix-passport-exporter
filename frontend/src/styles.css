@@ -170,6 +170,14 @@ button.ghost.small {
   font-size: 12px;
 }
 
+#download-last {
+  background: linear-gradient(90deg, #1aa96a, #0f8a54);
+}
+
+#download-last:hover {
+  filter: brightness(1.03);
+}
+
 .status { margin-top: 12px; }
 .status.ok { color: #70e8a0; }
 .status.err { color: #ff8a8a; }
