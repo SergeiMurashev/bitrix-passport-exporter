@@ -166,6 +166,7 @@ let liveDealsWithSupport = 0
 let liveSupportMeasuresTotal = 0
 let submitInFlight = false
 let hidePreviousDownloadForDraft = false
+let downloadInFlight = false
 
 function setAuthState(next: boolean) {
   form.classList.toggle('hidden', !next)
@@ -548,6 +549,9 @@ cancelExportBtn.addEventListener('click', () => {
 
 downloadLastBtn.addEventListener('click', () => {
   void (async () => {
+    if (downloadInFlight) return
+    downloadInFlight = true
+    downloadLastBtn.disabled = true
     try {
       const res = await fetch('/api/export/download-last')
       if (!res.ok) throw new Error(await readErrorMessage(res))
@@ -562,8 +566,15 @@ downloadLastBtn.addEventListener('click', () => {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
+      hidePreviousDownloadForDraft = true
+      downloadLastBtn.classList.add('hidden')
+      downloadLastBtn.textContent = 'Скачать готовый файл'
+      setStatus('Файл скачан. Для новой выгрузки выберите режим/формат и нажмите «Сформировать».', 'muted')
     } catch (error) {
       setStatus(humanizeError((error as Error).message || ''), 'err')
+    } finally {
+      downloadInFlight = false
+      downloadLastBtn.disabled = false
     }
   })()
 })
