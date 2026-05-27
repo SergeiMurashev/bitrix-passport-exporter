@@ -279,6 +279,12 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
+	forceRequested := false
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("force"))) {
+	case "1", "true", "yes", "y", "on":
+		forceRequested = true
+	}
+
 	h.mu.Lock()
 	cancel := h.fullExportCancel
 	busy := h.fullExportBusy
@@ -288,6 +294,35 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	active := running || busy || strings.EqualFold(phase, "tasks") || strings.EqualFold(phase, "passport")
 	h.cancelRequestedByUser = true
 	h.status.CancelRequested = true
+
+	if forceRequested {
+		h.fullExportBusy = false
+		h.fullExportCancel = nil
+		h.status.Running = false
+		h.status.CanCancel = false
+		h.status.CancelRequested = false
+		h.status.Phase = "canceled"
+		h.status.LastError = "export canceled by user (forced)"
+		h.status.FinishedAt = time.Now().UTC()
+		h.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+		log.WithFields(log.Fields{
+			"phase":  phase,
+			"active": active,
+		}).Warn("full export force-cancel requested by user")
+		writeAPISuccess(
+			w,
+			http.StatusAccepted,
+			"cancel_requested",
+			"Принудительная отмена выгрузки выполнена",
+			models.CancelExportData{CancelRequested: true},
+			nil,
+		)
+		return
+	}
 
 	// Жесткий fallback для рассинхрона:
 	// если lock занят, но cancel func потерян и running=false, сбрасываем lock.

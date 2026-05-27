@@ -164,6 +164,7 @@ let liveDealsProcessed = 0
 let liveTasksTotal = 0
 let liveDealsWithSupport = 0
 let liveSupportMeasuresTotal = 0
+let submitInFlight = false
 
 function setAuthState(next: boolean) {
   form.classList.toggle('hidden', !next)
@@ -435,8 +436,13 @@ form.addEventListener('change', (e) => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault()
+  if (submitInFlight) {
+    setStatus('Выгрузка уже запущена. Дождитесь завершения или остановите текущую.', 'muted')
+    return
+  }
+  submitInFlight = true
   let keepUiLocked = false
-  submitBtn.disabled = true
+  submitBtn.disabled = false
   submitBtn.textContent = 'Формируем...'
   cancelExportBtn.classList.remove('hidden')
   cancelExportBtn.disabled = false
@@ -498,6 +504,7 @@ form.addEventListener('submit', async (e) => {
       setStatus('Запрос из браузера прервался, но выгрузка продолжается на сервере. Дождитесь завершения или нажмите «Отменить выгрузку».', 'muted')
     }
   } finally {
+    submitInFlight = false
     if (!keepUiLocked) {
       submitBtn.disabled = false
       updateSubmitCaption()
@@ -505,7 +512,7 @@ form.addEventListener('submit', async (e) => {
       cancelExportBtn.disabled = false
       cancelExportBtn.textContent = 'Отменить выгрузку'
     } else {
-      submitBtn.disabled = true
+      submitBtn.disabled = false
       submitBtn.textContent = 'Формируем...'
     }
   }
@@ -513,11 +520,11 @@ form.addEventListener('submit', async (e) => {
 
 cancelExportBtn.addEventListener('click', () => {
   void (async () => {
-    cancelExportBtn.disabled = true
+    cancelExportBtn.disabled = false
     try {
-      const res = await fetch('/api/export/cancel', { method: 'POST' })
+      const res = await fetch('/api/export/cancel?force=1', { method: 'POST' })
       if (!res.ok) throw new Error(await readErrorMessage(res))
-      setStatus('Запрос на отмену отправлен. Ожидайте остановки выгрузки.', 'muted')
+      setStatus('Принудительная отмена отправлена. Проверяю состояние выгрузки...', 'muted')
       await refreshExportStatus()
     } catch (error) {
       setStatus(humanizeError((error as Error).message || ''), 'err')
@@ -593,13 +600,13 @@ async function refreshExportStatus() {
         liveSupportMeasuresTotal = supportMeasures
       }
 
-      submitBtn.disabled = true
+      submitBtn.disabled = false
       submitBtn.textContent = 'Формируем...'
       downloadLastBtn.classList.add('hidden')
       if (data.can_cancel) {
         cancelExportBtn.classList.remove('hidden')
-        cancelExportBtn.disabled = !!data.cancel_requested
-        cancelExportBtn.textContent = data.cancel_requested ? 'Отмена запрошена...' : 'Отменить выгрузку'
+        cancelExportBtn.disabled = false
+        cancelExportBtn.textContent = data.cancel_requested ? 'Принудительно остановить' : 'Отменить выгрузку'
       } else {
         cancelExportBtn.classList.add('hidden')
       }
