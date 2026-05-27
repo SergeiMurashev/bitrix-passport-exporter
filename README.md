@@ -60,7 +60,6 @@ docker compose up -d --build
 
 Если задан `API_ACCESS_TOKEN`, доступ к `/api/*` разрешен только с токеном.
 `/healthz` и UI остаются доступными без авторизации.
-При `API_ACCESS_TOKEN` UI работает автоматически: сервер выставляет `HttpOnly` cookie для запросов к `/api/*`.
 Основной рабочий сценарий: открытие UI из Bitrix24 portal app, где контекст портала (`auth`) передается автоматически.
 
 ## API
@@ -82,8 +81,8 @@ docker compose up -d --build
   2. `File -> Import File` и выберите `docs/openapi.yaml`
 - Swagger-аннотации в коде:
   - Общая мета-информация: `backend/cmd/server/docs.go`
-  - Аннотации по endpoint: `backend/internal/http/handler.go`
-  - Модели ответов/ошибок: `backend/internal/model/api_docs.go`
+  - Аннотации по endpoint: `backend/internal/http/*_handlers.go`
+  - Модели ответов/ошибок: `backend/internal/models/api_docs.go`
 - Генерация swagger из комментариев (swaggo):
   1. `go install github.com/swaggo/swag/cmd/swag@latest`
   2. `cd /Users/sergeimurashev/GolandProjects/bitrix-passport-exporter/backend`

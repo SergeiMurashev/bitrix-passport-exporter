@@ -18,7 +18,6 @@ servers:
 
 tags:
   - name: health
-  - name: auth
   - name: deals
   - name: export
 
@@ -62,95 +61,6 @@ paths:
               schema:
                 type: string
                 example: not ready
-
-  /api/auth/login:
-    post:
-      tags: [auth]
-      summary: Login (sets HttpOnly cookie session)
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-            example:
-              login: InvestClient
-              password: Agency_client_615243
-      responses:
-        "200":
-          description: Authorized
-          headers:
-            Set-Cookie:
-              description: HttpOnly cookie `bp_session`
-              schema:
-                type: string
-            Cache-Control:
-              schema:
-                type: string
-                example: no-store
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponseAuthLoginData"
-              example:
-                ok: true
-                status: authorized
-                message: Вход выполнен
-                data:
-                  expires_at: "2026-05-29T07:00:32.546263086Z"
-                  session: cookie
-                  user:
-                    id: 2
-                    login: InvestClient
-        "400":
-          description: Invalid request body
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiErrorResponse"
-        "401":
-          description: Invalid credentials
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiErrorResponse"
-        "429":
-          description: Too many login attempts
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiErrorResponse"
-
-  /api/auth/me:
-    get:
-      tags: [auth]
-      summary: Current session info
-      responses:
-        "200":
-          description: Session is active
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponseAuthMeData"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiErrorResponse"
-
-  /api/auth/logout:
-    post:
-      tags: [auth]
-      summary: Logout (clears session cookie)
-      responses:
-        "200":
-          description: Logged out
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponseGenericData"
 
   /api/deals/ids:
     get:
@@ -407,8 +317,8 @@ components:
     CookieAuth:
       type: apiKey
       in: cookie
-      name: bp_session
-      description: Session cookie after login
+      name: bp_portal_session
+      description: Portal session cookie
     BearerAuth:
       type: http
       scheme: bearer

@@ -1,7 +1,7 @@
 package main
 
 // @title Bitrix Passport Exporter API
-// @version 1.2.2
+// @version 1.3.4
 // @description API сервиса выгрузки "Паспорта проекта" и задач из Bitrix24.
 // @description
 // @description Базовый формат JSON-ответов:
@@ -20,7 +20,7 @@ package main
 //
 // @securityDefinitions.apikey CookieAuth
 // @in cookie
-// @name bp_session
+// @name bp_portal_session
 //
 // @securityDefinitions.apikey BearerAuth
 // @in header

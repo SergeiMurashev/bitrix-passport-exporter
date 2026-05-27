@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // healthz godoc
@@ -44,17 +43,6 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeMappedError(w, errFrontendNotBuilt, "frontend is not built; run frontend build")
 		return
-	}
-	if token := strings.TrimSpace(h.cfg.APIAccessToken); token != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "bp_api_token",
-			Value:    token,
-			Path:     "/api",
-			HttpOnly: true,
-			SameSite: sameSiteForRequest(r),
-			Secure:   requestIsHTTPS(r),
-			MaxAge:   30 * 24 * 60 * 60,
-		})
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(body)
