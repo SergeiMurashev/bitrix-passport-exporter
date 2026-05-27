@@ -165,6 +165,7 @@ let liveTasksTotal = 0
 let liveDealsWithSupport = 0
 let liveSupportMeasuresTotal = 0
 let submitInFlight = false
+let hidePreviousDownloadForDraft = false
 
 function setAuthState(next: boolean) {
   form.classList.toggle('hidden', !next)
@@ -179,6 +180,12 @@ function setMode(next: Mode) {
   mode = next
   idsWrap.classList.toggle('hidden', mode !== 'ids')
   fileWrap.classList.toggle('hidden', mode !== 'file')
+}
+
+function markScenarioChanged() {
+  if (lastRunning) return
+  hidePreviousDownloadForDraft = true
+  downloadLastBtn.classList.add('hidden')
 }
 
 function updateSubmitCaption() {
@@ -420,16 +427,25 @@ form.addEventListener('change', (e) => {
   const target = e.target as HTMLInputElement | HTMLSelectElement
   if (target.name === 'mode') {
     setMode(target.value as Mode)
+    markScenarioChanged()
     if (!lastRunning) {
       setStatus('', 'muted')
     }
   }
   if (target.id === 'export-format') {
     exportFormat = (target.value === 'docx' ? 'docx' : 'xlsx')
+    markScenarioChanged()
     if (!lastRunning) {
       updateSubmitCaption()
     }
   }
+  if (target.id === 'file') {
+    markScenarioChanged()
+  }
+})
+
+dealIdsEl.addEventListener('input', () => {
+  markScenarioChanged()
 })
 
 form.addEventListener('submit', async (e) => {
@@ -439,6 +455,7 @@ form.addEventListener('submit', async (e) => {
     return
   }
   submitInFlight = true
+  hidePreviousDownloadForDraft = false
   let keepUiLocked = false
   submitBtn.disabled = false
   submitBtn.textContent = 'Формируем...'
@@ -652,7 +669,7 @@ async function refreshExportStatus() {
       cancelExportBtn.classList.add('hidden')
       cancelExportBtn.disabled = false
       cancelExportBtn.textContent = 'Отменить выгрузку'
-      if (data.has_last_result) {
+      if (data.has_last_result && !hidePreviousDownloadForDraft) {
         downloadLastBtn.classList.remove('hidden')
         downloadLastBtn.textContent = data.last_file_name
           ? `Скачать готовый файл (${data.last_file_name})`
