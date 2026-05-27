@@ -20,7 +20,9 @@ type exportRequest struct {
 	projectField string
 }
 
-func (h *Handler) parseExportRequest(w http.ResponseWriter, r *http.Request) (exportRequest, bool) {
+func (h *Handler) parseExportRequest(
+	w http.ResponseWriter,
+	r *http.Request) (exportRequest, bool) {
 	req := exportRequest{
 		clientIP:     clientIPFromRequest(r),
 		projectField: projectFieldCode,
@@ -156,7 +158,11 @@ func (h *Handler) collectExportData(
 		})
 
 		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
-			allTasks, allStats, allIssues, allErr := svc.BuildTasks(ctx, allProjects, req.projectField, allowTitleFallback)
+			allTasks, allStats, allIssues, allErr := svc.BuildTasks(
+				ctx,
+				allProjects,
+				req.projectField,
+				allowTitleFallback)
 			if allErr != nil {
 				h.handleTasksCollectError(w, allErr, auditErrText)
 				return nil, nil, nil, service.ExportStats{}, "", false
@@ -204,7 +210,11 @@ func (h *Handler) collectExportData(
 		})
 
 		var callErr error
-		tasks, stats, issues, callErr = svc.BuildTasks(ctx, projects, req.projectField, allowTitleFallback)
+		tasks, stats, issues, callErr = svc.BuildTasks(
+			ctx,
+			projects,
+			req.projectField,
+			allowTitleFallback)
 		if callErr != nil {
 			h.handleTasksCollectError(w, callErr, auditErrText)
 			return nil, nil, nil, service.ExportStats{}, "", false
@@ -247,7 +257,9 @@ func (h *Handler) buildExportBinary(
 	return result, contentType, true
 }
 
-func (h *Handler) respondExportCanceled(w http.ResponseWriter, auditErrText *string) {
+func (h *Handler) respondExportCanceled(
+	w http.ResponseWriter,
+	auditErrText *string) {
 	h.markStatusCanceledByUser()
 	if auditErrText != nil {
 		*auditErrText = "export canceled by user"
@@ -255,7 +267,10 @@ func (h *Handler) respondExportCanceled(w http.ResponseWriter, auditErrText *str
 	writeMappedError(w, errExportCanceled, "export canceled by user")
 }
 
-func (h *Handler) handleTasksCollectError(w http.ResponseWriter, err error, auditErrText *string) {
+func (h *Handler) handleTasksCollectError(
+	w http.ResponseWriter,
+	err error,
+	auditErrText *string) {
 	if err == nil {
 		return
 	}

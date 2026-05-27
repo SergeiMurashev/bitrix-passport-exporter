@@ -40,21 +40,23 @@ var (
 		Message:  "Требуется авторизация",
 		Code:     "AUTH_REQUIRED",
 	}
-	errInvalidJSON = apiErrorDef{
-		HTTPCode: http.StatusBadRequest,
-		Status:   "bad_request",
-		Message:  "Некорректный JSON в теле запроса",
-		Code:     "INVALID_JSON",
-	}
 )
 
-func writeAPIResponse(w http.ResponseWriter, httpCode int, body apiResponse) {
+func writeAPIResponse(
+	w http.ResponseWriter,
+	httpCode int,
+	body apiResponse) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(httpCode)
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func writeAPISuccess(w http.ResponseWriter, httpCode int, status, message string, data any, meta any) {
+func writeAPISuccess(
+	w http.ResponseWriter,
+	httpCode int, status,
+	message string,
+	data any,
+	meta any) {
 	if strings.TrimSpace(status) == "" {
 		status = "success"
 	}
@@ -67,7 +69,14 @@ func writeAPISuccess(w http.ResponseWriter, httpCode int, status, message string
 	})
 }
 
-func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, detail string, meta any) {
+func writeAPIError(
+	w http.ResponseWriter,
+	httpCode int,
+	status,
+	message,
+	code,
+	detail string,
+	meta any) {
 	if strings.TrimSpace(status) == "" {
 		status = "error"
 	}
@@ -83,7 +92,11 @@ func writeAPIError(w http.ResponseWriter, httpCode int, status, message, code, d
 	})
 }
 
-func writeAPIErrorDef(w http.ResponseWriter, def apiErrorDef, detail string, meta any) {
+func writeAPIErrorDef(
+	w http.ResponseWriter,
+	def apiErrorDef,
+	detail string,
+	meta any) {
 	writeAPIError(
 		w,
 		def.HTTPCode,
@@ -95,11 +108,17 @@ func writeAPIErrorDef(w http.ResponseWriter, def apiErrorDef, detail string, met
 	)
 }
 
-func writeAPIErrorDefSimple(w http.ResponseWriter, def apiErrorDef, detail string) {
+func writeAPIErrorDefSimple(
+	w http.ResponseWriter,
+	def apiErrorDef,
+	detail string) {
 	writeAPIErrorDef(w, def, detail, nil)
 }
 
-func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+func requireMethod(
+	w http.ResponseWriter,
+	r *http.Request,
+	method string) bool {
 	if r.Method == method {
 		return true
 	}

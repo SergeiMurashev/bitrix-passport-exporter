@@ -148,7 +148,10 @@ func buildProjectsFromTable(rows []map[string]string) ([]models.ProjectRow, erro
 		if jobsRaw == "" || jobsRaw == "0" {
 			jobsRaw = getCell(r, "Рабочие места (постоянные) - план")
 		}
-		sectionKey := detectSection(stage, getCell(r, "Окончание проекта"), cleanSpaces(getCell(r, "Ход реализации проекта")))
+		sectionKey := detectSection(
+			stage,
+			getCell(r, "Окончание проекта"),
+			cleanSpaces(getCell(r, "Ход реализации проекта")))
 		investorRaw := pickFirstNonEmpty(
 			getCell(r, "Инвестор-инициатор"),
 			getCell(r, "Компания"),
@@ -206,11 +209,6 @@ func cell(row []string, idx int) string {
 	return strings.TrimSpace(row[idx])
 }
 
-func hasColumn(m map[string]string, key string) bool {
-	_, ok := m[key]
-	return ok
-}
-
 func hasAnyColumn(m map[string]string, key string) bool {
 	aliases, ok := columnAliases[key]
 	if !ok {
@@ -262,7 +260,10 @@ func investorShort(s string) string {
 	return t
 }
 
-func detectSection(stage, endDate, progress string) string {
+func detectSection(
+	stage,
+	endDate,
+	progress string) string {
 	s := strings.ToLower(stage)
 	currentYear := time.Now().Year()
 	if strings.Contains(s, "реализован") {
@@ -291,7 +292,8 @@ func detectSection(stage, endDate, progress string) string {
 	}
 }
 
-func buildSectionOrder(groups map[string][]models.ProjectRow) ([]string, map[string]string) {
+func buildSectionOrder(
+	groups map[string][]models.ProjectRow) ([]string, map[string]string) {
 	currentYear := time.Now().Year()
 	fixed := []string{
 		fmt.Sprintf("%d_сопровождение", currentYear),

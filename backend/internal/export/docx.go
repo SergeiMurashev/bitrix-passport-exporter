@@ -21,20 +21,35 @@ type docxCell struct {
 	center   bool
 }
 
-func BuildResultDOCX(projects []models.ProjectRow, tasks []models.TaskRow) ([]byte, error) {
+// BuildResultDOCX сборщик DOCX-файл с результатами экспорта паспортов проектов из Битрикс24.
+func BuildResultDOCX(
+	projects []models.ProjectRow,
+	tasks []models.TaskRow) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 
-	if err := writeDocxPart(zw, "[Content_Types].xml", contentTypesXML()); err != nil {
+	if err := writeDocxPart(
+		zw,
+		"[Content_Types].xml",
+		contentTypesXML()); err != nil {
 		return nil, err
 	}
-	if err := writeDocxPart(zw, "_rels/.rels", packageRelsXML()); err != nil {
+	if err := writeDocxPart(
+		zw,
+		"_rels/.rels",
+		packageRelsXML()); err != nil {
 		return nil, err
 	}
-	if err := writeDocxPart(zw, "word/document.xml", buildDocumentXML(projects, tasks)); err != nil {
+	if err := writeDocxPart(
+		zw,
+		"word/document.xml",
+		buildDocumentXML(projects, tasks)); err != nil {
 		return nil, err
 	}
-	if err := writeDocxPart(zw, "word/_rels/document.xml.rels", documentRelsXML()); err != nil {
+	if err := writeDocxPart(
+		zw,
+		"word/_rels/document.xml.rels",
+		documentRelsXML()); err != nil {
 		return nil, err
 	}
 
@@ -53,10 +68,10 @@ func writeDocxPart(zw *zip.Writer, name, body string) error {
 	return err
 }
 
-func buildDocumentXML(projects []models.ProjectRow, tasks []models.TaskRow) string {
+func buildDocumentXML(
+	projects []models.ProjectRow,
+	tasks []models.TaskRow) string {
 	headers := []string{"№ п/п", "Инвестиционный проект", "Стадия", "Задача проекта", "Меры поддержки по проекту"}
-	// Ширины в twips под A4 landscape с полями 720 twips:
-	// полезная ширина = 16840 - 720 - 720 = 15400
 	widths := []int{700, 4000, 4000, 3800, 2900}
 	tasksByDeal := buildTasksByDeal(tasks)
 	sections := groupBySection(projects)
@@ -190,7 +205,10 @@ func docxRowXML(cells []docxCell, widths []int) string {
 	return b.String()
 }
 
-func docxParaXML(text string, bold bool, center bool) string {
+func docxParaXML(
+	text string,
+	bold bool,
+	center bool) string {
 	var b strings.Builder
 	b.WriteString(`<w:p>`)
 	b.WriteString(`<w:pPr>`)
@@ -260,13 +278,11 @@ func stripInvalidXMLChars(s string) string {
 			b.WriteRune(r)
 			continue
 		}
-		// Сохраняем читабельность текста, подменяя мусорный символ пробелом.
 		b.WriteRune(' ')
 	}
 	return b.String()
 }
 
-// руна на поиск "сломанного" XML символа
 func isValidXMLRune(r rune) bool {
 	switch r {
 	case 0x9, 0xA, 0xD:
@@ -281,11 +297,6 @@ func isValidXMLRune(r rune) bool {
 	return r >= 0x10000 && r <= 0x10FFFF
 }
 
-/*
-Типы в XML для DOCX (Content_Types, Relationships)
-
-	-минимальный набор для корректного открытия документа в Word.
-*/
 func contentTypesXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
@@ -295,11 +306,6 @@ func contentTypesXML() string {
 		`</Types>`
 }
 
-/*
-Relationships для DOCX - минимальный набор для корректного открытия документа в Word.
-
-	В данном случае, единственное отношение - это связь между корневым пакетом и основным документом (document.xml).
-*/
 func packageRelsXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
@@ -307,11 +313,6 @@ func packageRelsXML() string {
 		`</Relationships>`
 }
 
-/*
-Relationships для документа (document.xml) - в данном случае, у нас нет внешних ресурсов (картинок, стилей и т.д.),
-
-	поэтому он пустой, но его наличие обязательно для корректного открытия документа в Word.
-*/
 func documentRelsXML() string {
 	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`

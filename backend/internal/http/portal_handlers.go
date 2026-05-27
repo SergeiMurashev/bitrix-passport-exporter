@@ -12,7 +12,11 @@ func (h *Handler) portalSessionBootstrap(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if ok := h.bootstrapPortalSessionFromRequest(w, r); !ok {
-		writeMappedError(w, errPortalContextMissing, "bitrix portal auth payload is missing")
+		writeMappedError(
+			w,
+			errPortalContextMissing,
+			"bitrix portal auth payload is missing",
+		)
 		return
 	}
 	writeAPISuccess(
@@ -31,7 +35,11 @@ func (h *Handler) portalMe(w http.ResponseWriter, r *http.Request) {
 	}
 	session, ok := h.portalSessionFromRequest(r)
 	if !ok {
-		writeMappedError(w, errPortalSessionRequired, "portal session is required")
+		writeMappedError(
+			w,
+			errPortalSessionRequired,
+			"portal session is required",
+		)
 		return
 	}
 	writeAPISuccess(

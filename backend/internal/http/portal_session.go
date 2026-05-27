@@ -40,7 +40,9 @@ type portalAuthPayload struct {
 }
 
 // bootstrapPortalSessionFromRequest создает portalSession из данных запроса и установить cookie. Возвращает true, если сессия успешно создана.
-func (h *Handler) bootstrapPortalSessionFromRequest(w http.ResponseWriter, r *http.Request) bool {
+func (h *Handler) bootstrapPortalSessionFromRequest(
+	w http.ResponseWriter,
+	r *http.Request) bool {
 	payload, hasPayload, err := readPortalAuthPayload(r)
 	if err != nil {
 		return false
@@ -200,7 +202,8 @@ func readPortalAuthPayload(r *http.Request) (portalAuthPayload, bool, error) {
 		return ""
 	}
 	payload = portalAuthPayload{
-		Domain: v("domain", "DOMAIN", "auth[domain]", "AUTH[DOMAIN]"),
+		Domain: v(
+			"domain", "DOMAIN", "auth[domain]", "AUTH[DOMAIN]"),
 		AccessToken: v(
 			"access_token",
 			"AUTH_ID",

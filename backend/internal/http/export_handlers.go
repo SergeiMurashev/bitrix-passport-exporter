@@ -109,15 +109,23 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		h.finishFullExport()
 		fullExportLocked = false
 	}
-	h.completeExportSuccess(w, req.dealIDs, req.exportFormat, sourceLabel, result, contentType, issues, stats, exportStartedAt)
+	h.completeExportSuccess(
+		w,
+		req.dealIDs,
+		req.exportFormat,
+		sourceLabel,
+		result,
+		contentType,
+		issues,
+		stats,
+		exportStartedAt,
+	)
 }
 
 func (h *Handler) tryStartFullExport() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.fullExportBusy {
-		// Сеть безопасности: флаг занятости всегда должен соответствовать активному статусу.
-		// Если статус не работает, блокировка устарела и ее можно восстановить.
 		if !h.status.Running {
 			log.WithFields(log.Fields{
 				"phase":         h.status.Phase,
@@ -324,8 +332,6 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Жесткий fallback для рассинхрона:
-	// если lock занят, но cancel func потерян и running=false, сбрасываем lock.
 	if busy && !running && cancel == nil {
 		h.fullExportBusy = false
 		h.status.Running = false
@@ -448,18 +454,6 @@ func (h *Handler) consumeLastResult(path string) {
 	if err := os.Remove(cleanPath); err != nil && !os.IsNotExist(err) {
 		log.WithError(err).WithField("path", cleanPath).Warn("failed to remove consumed last export file")
 	}
-}
-
-func detectExportMode(r *http.Request, dealIDs []int) string {
-	if r != nil && r.MultipartForm != nil {
-		if files := r.MultipartForm.File["file"]; len(files) > 0 {
-			return "file"
-		}
-	}
-	if len(dealIDs) > 0 {
-		return "ids"
-	}
-	return "all"
 }
 
 func mergeExportStats(a, b service.ExportStats) service.ExportStats {

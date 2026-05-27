@@ -123,7 +123,11 @@ func mapDealFields(items []bitrix.DealField) []models.DealField {
 	return out
 }
 
-func (h *Handler) loadProjects(ctx context.Context, r *http.Request, bClient *bitrix.Client, dealIDs []int) ([]models.ProjectRow, string, error) {
+func (h *Handler) loadProjects(
+	ctx context.Context,
+	r *http.Request,
+	bClient *bitrix.Client,
+	dealIDs []int) ([]models.ProjectRow, string, error) {
 	file, fh, err := r.FormFile("file")
 	if err == nil {
 		defer file.Close()

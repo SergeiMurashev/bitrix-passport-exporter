@@ -41,7 +41,11 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	indexPath := filepath.Join(frontendDistDir(), "index.html")
 	body, err := os.ReadFile(indexPath)
 	if err != nil {
-		writeMappedError(w, errFrontendNotBuilt, "frontend is not built; run frontend build")
+		writeMappedError(
+			w,
+			errFrontendNotBuilt,
+			"frontend is not built; run frontend build",
+		)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

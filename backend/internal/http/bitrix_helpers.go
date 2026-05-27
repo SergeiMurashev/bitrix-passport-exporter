@@ -8,7 +8,9 @@ import (
 )
 
 // newBitrixClientFromRequest создаёт клиент Битрикс из активной portal-сессии.
-func (h *Handler) newBitrixClientFromRequest(w http.ResponseWriter, r *http.Request) (*bitrix.Client, bool) {
+func (h *Handler) newBitrixClientFromRequest(
+	w http.ResponseWriter,
+	r *http.Request) (*bitrix.Client, bool) {
 	if session, ok := h.portalSessionFromRequest(r); ok {
 		expiresAt := session.ExpiresAt
 		if expiresAt.IsZero() {

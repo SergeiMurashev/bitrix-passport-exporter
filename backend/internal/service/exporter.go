@@ -32,24 +32,49 @@ type ExportStats struct {
 	TaskLoadErrors       int
 }
 
-func NewExporter(client *bitrix.Client, taskWorkers int, strategy string) *Exporter {
+func NewExporter(
+	client *bitrix.Client,
+	taskWorkers int,
+	strategy string) *Exporter {
 	if taskWorkers <= 0 {
 		taskWorkers = 8
 	}
 	if strategy == "" {
 		strategy = "per_deal"
 	}
-	return &Exporter{bitrix: client, taskWorkers: taskWorkers, strategy: strings.ToLower(strings.TrimSpace(strategy))}
-}
-
-func (e *Exporter) BuildTasks(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
-	if e.strategy == "bulk" {
-		return e.buildTasksBulk(ctx, projects, projectField, allowTitleFallback)
+	return &Exporter{
+		bitrix:      client,
+		taskWorkers: taskWorkers,
+		strategy:    strings.ToLower(strings.TrimSpace(strategy)),
 	}
-	return e.buildTasksPerDeal(ctx, projects, projectField, allowTitleFallback)
 }
 
-func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
+func (e *Exporter) BuildTasks(
+	ctx context.Context,
+	projects []models.ProjectRow,
+	projectField string,
+	allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
+	if e.strategy == "bulk" {
+		return e.buildTasksBulk(
+			ctx,
+			projects,
+			projectField,
+			allowTitleFallback,
+		)
+	}
+	return e.buildTasksPerDeal(
+		ctx,
+		projects,
+		projectField,
+		allowTitleFallback,
+	)
+}
+
+func (e *Exporter) buildTasksPerDeal(
+	ctx context.Context,
+	projects []models.ProjectRow,
+	projectField string,
+	allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -98,7 +123,12 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 			dealTasks = nil
 		}
 		if projectID == 0 {
-			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(ctx, p, projectField, allowTitleFallback)
+			resolvedProjectID, resolvedSource, resolveErr := e.bitrix.ResolveProjectForDeal(
+				ctx,
+				p,
+				projectField,
+				allowTitleFallback,
+			)
 			if resolveErr != nil {
 				if bitrix.IsAuthError(resolveErr) {
 					return fmt.Errorf("bitrix auth failed: %w", resolveErr)
@@ -110,7 +140,9 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 				stats.DealsResolveErrors++
 				statsMu.Unlock()
 				issuesMu.Lock()
-				issues = append(issues, fmt.Sprintf("deal_id=%d title=%q resolve project error: %v", p.DealID, p.DealTitle, resolveErr))
+				issues = append(
+					issues,
+					fmt.Sprintf("deal_id=%d title=%q resolve project error: %v", p.DealID, p.DealTitle, resolveErr))
 				issuesMu.Unlock()
 			} else {
 				projectID = resolvedProjectID
@@ -262,7 +294,14 @@ func (e *Exporter) buildTasksPerDeal(ctx context.Context, projects []models.Proj
 	return tasks, stats, issues, nil
 }
 
-func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.ProjectRow, projectField string, allowTitleFallback bool) ([]models.TaskRow, ExportStats, []string, error) {
+func (e *Exporter) buildTasksBulk(
+	ctx context.Context,
+	projects []models.ProjectRow,
+	projectField string,
+	allowTitleFallback bool) ([]models.TaskRow,
+	ExportStats,
+	[]string,
+	error) {
 	_ = allowTitleFallback
 	stats := ExportStats{DealsTotal: len(projects)}
 	var tasks []models.TaskRow
@@ -363,9 +402,6 @@ func (e *Exporter) buildTasksBulk(ctx context.Context, projects []models.Project
 			stats.ProjectsWithoutTasks++
 		}
 	}
-
-	// Для bulk-режима больше не делаем per-deal fallback с дополнительными API-вызовами:
-	// матчим только по уже загруженному общему пулу задач портала.
 	if len(unresolved) > 0 {
 		for _, d := range unresolved {
 			if err := ctx.Err(); err != nil {
@@ -485,7 +521,11 @@ func mergeTaskPools(a, b []map[string]any) []map[string]any {
 	return out
 }
 
-func detectLinkSource(task map[string]any, dealID int, projectID int, projectField string) string {
+func detectLinkSource(
+	task map[string]any,
+	dealID int,
+	projectID int,
+	projectField string) string {
 	for _, d := range extractDealBindings(task) {
 		if d == dealID {
 			return humanizeLinkSource("deal.binding")

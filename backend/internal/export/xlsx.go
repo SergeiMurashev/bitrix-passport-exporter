@@ -11,7 +11,10 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-func BuildResultXLSX(projects []models.ProjectRow, tasks []models.TaskRow) ([]byte, error) {
+// BuildResultXLSX сборщик XLSX-файл с результатами экспорта паспортов проектов из Битрикс24.
+func BuildResultXLSX(
+	projects []models.ProjectRow,
+	tasks []models.TaskRow) ([]byte, error) {
 	f := excelize.NewFile()
 	defer f.Close()
 
@@ -195,7 +198,12 @@ func buildTasksByDeal(tasks []models.TaskRow) map[int]string {
 	return out
 }
 
-func styleRegistrySheet(f *excelize.File, sheet string, lastRow int, sectionRows map[int]struct{}) error {
+// Регистрация стилей для листа с реестром проектов и задач.
+func styleRegistrySheet(
+	f *excelize.File,
+	sheet string,
+	lastRow int,
+	sectionRows map[int]struct{}) error {
 	headerStyle, err := f.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true},
 		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
@@ -243,7 +251,14 @@ func styleRegistrySheet(f *excelize.File, sheet string, lastRow int, sectionRows
 			_ = f.SetRowHeight(sheet, r, 22)
 		}
 	}
-	_ = f.SetPanes(sheet, &excelize.Panes{Freeze: true, Split: false, XSplit: 0, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"})
+	_ = f.SetPanes(sheet, &excelize.Panes{
+		Freeze:      true,
+		Split:       false,
+		XSplit:      0,
+		YSplit:      1,
+		TopLeftCell: "A2",
+		ActivePane:  "bottomLeft"},
+	)
 	return nil
 }
 

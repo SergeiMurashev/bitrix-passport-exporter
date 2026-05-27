@@ -99,7 +99,9 @@ func NewFromPortalSession(
 	}, nil
 }
 
-func (c *Client) ConfigureSupportMapping(linkDealField, measureValueField string) {
+func (c *Client) ConfigureSupportMapping(
+	linkDealField,
+	measureValueField string) {
 	c.supportLinkDealField = strings.TrimSpace(linkDealField)
 	if strings.TrimSpace(measureValueField) != "" {
 		c.supportMeasureValueField = strings.TrimSpace(measureValueField)
@@ -151,12 +153,21 @@ func (c *Client) dealSelectFields(extra ...string) []string {
 	return out
 }
 
-func (c *Client) ResolveProjectForDeal(ctx context.Context, p models.ProjectRow, projectField string, allowTitleFallback bool) (int, string, error) {
+func (c *Client) ResolveProjectForDeal(
+	ctx context.Context,
+	p models.ProjectRow,
+	projectField string,
+	allowTitleFallback bool) (int, string, error) {
 	if p.ProjectID > 0 {
 		return p.ProjectID, "deal." + projectField, nil
 	}
 	if p.DealID > 0 {
-		resp, err := c.callWithRetry(ctx, "crm.deal.get", map[string]any{"id": p.DealID})
+		resp, err := c.callWithRetry(
+			ctx,
+			"crm.deal.get",
+			map[string]any{
+				"id": p.DealID,
+			})
 		if err == nil {
 			resultMap, _ := resp.Result.(map[string]any)
 			if gid := toInt(fmt.Sprintf("%v", resultMap[projectField])); gid > 0 {
@@ -188,24 +199,32 @@ func (c *Client) ResolveProjectForDeal(ctx context.Context, p models.ProjectRow,
 	return toInt(fmt.Sprintf("%v", groups[0]["ID"])), "sonet_group.get(NAME)", nil
 }
 
-func (c *Client) GetDeals(ctx context.Context, dealID int) ([]models.ProjectRow, error) {
+func (c *Client) GetDeals(
+	ctx context.Context,
+	dealID int) ([]models.ProjectRow, error) {
 	if dealID > 0 {
 		return c.GetDealsByIDs(ctx, []int{dealID})
 	}
 	return c.GetDealsByIDs(ctx, nil)
 }
 
-func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsPage, error) {
+func (c *Client) GetDealsPage(
+	ctx context.Context,
+	start int,
+	limit int) (DealsPage, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
 	stageLabels, _ := c.loadDealStageMeta(ctx)
 	if limit <= 0 {
 		limit = 200
 	}
-	resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-		"select": c.dealSelectFields(),
-		"order":  map[string]string{"ID": "ASC"},
-		"start":  start,
-	})
+	resp, err := c.callWithRetry(
+		ctx,
+		"crm.deal.list",
+		map[string]any{
+			"select": c.dealSelectFields(),
+			"order":  map[string]string{"ID": "ASC"},
+			"start":  start,
+		})
 	if err != nil {
 		return DealsPage{}, err
 	}
@@ -214,7 +233,12 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 	for _, item := range items {
 		rows = append(rows, mapDealToProjectRow(item, enumLabels, stageLabels))
 	}
-	c.applySupportFromLinkedDeals(ctx, items, rows, enumLabels)
+	c.applySupportFromLinkedDeals(
+		ctx,
+		items,
+		rows,
+		enumLabels,
+	)
 	next := toInt(fmt.Sprintf("%v", resp.Next))
 	total := 0
 	if m, ok := resp.Result.(map[string]any); ok {
@@ -223,7 +247,9 @@ func (c *Client) GetDealsPage(ctx context.Context, start int, limit int) (DealsP
 	return DealsPage{Rows: rows, Next: next, Total: total}, nil
 }
 
-func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]models.ProjectRow, error) {
+func (c *Client) GetDealsByIDs(
+	ctx context.Context,
+	ids []int) ([]models.ProjectRow, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
 	stageLabels, _ := c.loadDealStageMeta(ctx)
 
@@ -252,26 +278,38 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]models.Project
 				idValues = append(idValues, strconv.Itoa(id))
 			}
 
-			resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-				"filter": map[string]any{
-					"ID": idValues,
-				},
-				"select": c.dealSelectFields(),
-				"order":  map[string]string{"ID": "ASC"},
-			})
+			resp, err := c.callWithRetry(
+				ctx,
+				"crm.deal.list",
+				map[string]any{
+					"filter": map[string]any{
+						"ID": idValues,
+					},
+					"select": c.dealSelectFields(),
+					"order":  map[string]string{"ID": "ASC"},
+				})
 			if err != nil {
 				return nil, err
 			}
 			items := toSliceMap(resp.Result)
 			localRows := make([]models.ProjectRow, 0, len(items))
 			for _, item := range items {
-				row := mapDealToProjectRow(item, enumLabels, stageLabels)
+				row := mapDealToProjectRow(
+					item,
+					enumLabels,
+					stageLabels,
+				)
 				if row.DealID > 0 {
 					found[row.DealID] = struct{}{}
 				}
 				localRows = append(localRows, row)
 			}
-			c.applySupportFromLinkedDeals(ctx, items, localRows, enumLabels)
+			c.applySupportFromLinkedDeals(
+				ctx,
+				items,
+				localRows,
+				enumLabels,
+			)
 			out = append(out, localRows...)
 		}
 
@@ -327,11 +365,14 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]models.Project
 		if page > maxPages {
 			return nil, fmt.Errorf("deals pagination exceeded %d pages", maxPages)
 		}
-		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-			"select": c.dealSelectFields(),
-			"order":  map[string]string{"ID": "ASC"},
-			"start":  start,
-		})
+		resp, err := c.callWithRetry(
+			ctx,
+			"crm.deal.list",
+			map[string]any{
+				"select": c.dealSelectFields(),
+				"order":  map[string]string{"ID": "ASC"},
+				"start":  start,
+			})
 		if err != nil {
 			return nil, err
 		}
@@ -344,7 +385,12 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]models.Project
 		for _, item := range items {
 			localRows = append(localRows, mapDealToProjectRow(item, enumLabels, stageLabels))
 		}
-		c.applySupportFromLinkedDeals(ctx, items, localRows, enumLabels)
+		c.applySupportFromLinkedDeals(
+			ctx,
+			items,
+			localRows,
+			enumLabels,
+		)
 		out = append(out, localRows...)
 
 		next := toInt(fmt.Sprintf("%v", resp.Next))
@@ -360,7 +406,9 @@ func (c *Client) GetDealsByIDs(ctx context.Context, ids []int) ([]models.Project
 	return out, nil
 }
 
-func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []int) ([]models.ProjectRow, map[int]struct{}, error) {
+func (c *Client) findDealsByIdentifierFields(
+	ctx context.Context,
+	identifiers []int) ([]models.ProjectRow, map[int]struct{}, error) {
 	enumLabels, _ := c.loadEnumLabels(ctx)
 	stageLabels, _ := c.loadDealStageMeta(ctx)
 	fields, err := c.ListDealFields(ctx)
@@ -393,19 +441,26 @@ func (c *Client) findDealsByIdentifierFields(ctx context.Context, identifiers []
 	seenDeal := make(map[int]struct{}, len(identifiers))
 
 	for _, fieldCode := range candidates {
-		resp, callErr := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-			"filter": map[string]any{
-				fieldCode: vals,
-			},
-			"select": c.dealSelectFields(fieldCode),
-			"order":  map[string]string{"ID": "ASC"},
-		})
+		resp, callErr := c.callWithRetry(
+			ctx,
+			"crm.deal.list",
+			map[string]any{
+				"filter": map[string]any{
+					fieldCode: vals,
+				},
+				"select": c.dealSelectFields(fieldCode),
+				"order":  map[string]string{"ID": "ASC"},
+			})
 		if callErr != nil {
 			continue
 		}
 		items := toSliceMap(resp.Result)
 		for _, item := range items {
-			row := mapDealToProjectRow(item, enumLabels, stageLabels)
+			row := mapDealToProjectRow(
+				item,
+				enumLabels,
+				stageLabels,
+			)
 			if row.DealID <= 0 {
 				continue
 			}
@@ -480,7 +535,11 @@ func (c *Client) ListDealIDs(ctx context.Context) ([]DealShort, error) {
 }
 
 func (c *Client) ListDealFields(ctx context.Context) ([]DealField, error) {
-	resp, err := c.callWithRetry(ctx, "crm.deal.fields", nil)
+	resp, err := c.callWithRetry(
+		ctx,
+		"crm.deal.fields",
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +566,9 @@ func (c *Client) ListDealFields(ctx context.Context) ([]DealField, error) {
 	return out, nil
 }
 
-func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string]any, error) {
+func (c *Client) GetProjectTasks(
+	ctx context.Context,
+	groupID int) ([]map[string]any, error) {
 	start := 0
 	const maxPages = 10000
 	page := 0
@@ -536,7 +597,6 @@ func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string
 
 		next := toInt(fmt.Sprintf("%v", resultMap["next"]))
 		if next == 0 && len(chunk) > 0 {
-			// For some clients top-level `next` can be missing; fallback to offset pagination.
 			next = start + len(chunk)
 		}
 		if next == 0 || next <= start || len(chunk) == 0 {
@@ -548,12 +608,14 @@ func (c *Client) GetProjectTasks(ctx context.Context, groupID int) ([]map[string
 	return all, nil
 }
 
-func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any, error) {
+func (c *Client) GetDealTasks(
+	ctx context.Context,
+	dealID int) ([]map[string]any,
+	error) {
 	if dealID <= 0 {
 		return nil, nil
 	}
 
-	// Bitrix Portal различаются: некоторые используют UF_CRM_TASK, некоторые полагаются на фильтры привязки CRM.
 	variants := []map[string]any{
 		{"UF_CRM_TASK": fmt.Sprintf("D_%d", dealID)},
 		{"CRM_BINDING": fmt.Sprintf("D_%d", dealID)},
@@ -587,7 +649,9 @@ func (c *Client) GetDealTasks(ctx context.Context, dealID int) ([]map[string]any
 	return merged, nil
 }
 
-func (c *Client) GetAllTasks(ctx context.Context) ([]map[string]any, error) {
+func (c *Client) GetAllTasks(
+	ctx context.Context) ([]map[string]any,
+	error) {
 	start := 0
 	const maxPages = 10000
 	page := 0
@@ -628,7 +692,10 @@ func (c *Client) GetAllTasks(ctx context.Context) ([]map[string]any, error) {
 	return all, nil
 }
 
-func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([]map[string]any, error) {
+func (c *Client) getTasksByFilter(
+	ctx context.Context,
+	filter map[string]any) ([]map[string]any,
+	error) {
 	start := 0
 	const maxPages = 10000
 	page := 0
@@ -671,7 +738,10 @@ func (c *Client) getTasksByFilter(ctx context.Context, filter map[string]any) ([
 	return all, nil
 }
 
-func (c *Client) GetUserName(ctx context.Context, userID int) (string, error) {
+func (c *Client) GetUserName(
+	ctx context.Context,
+	userID int) (string,
+	error) {
 	resp, err := c.callWithRetry(ctx, "user.get", map[string]any{
 		"FILTER": map[string]any{"ID": userID},
 	})
@@ -691,7 +761,11 @@ func (c *Client) GetUserName(ctx context.Context, userID int) (string, error) {
 	return name, nil
 }
 
-func (c *Client) callWithRetry(ctx context.Context, method string, params map[string]any) (*bitrixResponse, error) {
+func (c *Client) callWithRetry(
+	ctx context.Context,
+	method string,
+	params map[string]any) (*bitrixResponse,
+	error) {
 	const maxAttempts = 5
 	backoff := 300 * time.Millisecond
 	var lastErr error
@@ -716,7 +790,11 @@ func (c *Client) callWithRetry(ctx context.Context, method string, params map[st
 	return nil, lastErr
 }
 
-func (c *Client) callViaBixgo(ctx context.Context, method string, params map[string]any) (*bitrixResponse, error) {
+func (c *Client) callViaBixgo(
+	ctx context.Context,
+	method string,
+	params map[string]any) (*bitrixResponse,
+	error) {
 	if c.bix == nil {
 		return nil, fmt.Errorf("bitrix client is not initialized")
 	}
@@ -731,8 +809,6 @@ func (c *Client) callViaBixgo(ctx context.Context, method string, params map[str
 	out := &bitrixResponse{
 		Result: listResponse.Result,
 	}
-	// Для методов со списками (`crm.deal.list`) в bixgo нет поля `next`,
-	// поэтому вычисляем его из `start`, `total` и количества элементов.
 	if items := toSliceMap(listResponse.Result); len(items) > 0 {
 		start := 0
 		if params != nil {
@@ -819,7 +895,10 @@ func anyMapGet(m map[string]any, keys ...string) any {
 	return nil
 }
 
-func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]string, stageLabels map[string]stageMeta) models.ProjectRow {
+func mapDealToProjectRow(
+	deal map[string]any,
+	enumLabels map[string]map[string]string,
+	stageLabels map[string]stageMeta) models.ProjectRow {
 	stage := strings.TrimSpace(toString(anyMapGet(deal, "STAGE_ID", "stageId")))
 	stageName := stage
 	if meta, ok := stageLabels[stage]; ok {
@@ -829,7 +908,10 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 	}
 	progress := strings.TrimSpace(toString(anyMapGet(deal, "UF_CRM_1739951854")))
 	if progress == "" {
-		progress = enumValue(enumLabels, dealFieldIndustry, toString(anyMapGet(deal, dealFieldIndustry)))
+		progress = enumValue(
+			enumLabels,
+			dealFieldIndustry,
+			toString(anyMapGet(deal, dealFieldIndustry)))
 	}
 
 	description := strings.TrimSpace(toString(anyMapGet(deal, dealFieldDescription)))
@@ -839,7 +921,10 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 
 	location := extractAddress(toString(anyMapGet(deal, dealFieldAddress)))
 	if location == "" {
-		location = enumValue(enumLabels, dealFieldMunicipality, toString(anyMapGet(deal, dealFieldMunicipality)))
+		location = enumValue(
+			enumLabels,
+			dealFieldMunicipality,
+			toString(anyMapGet(deal, dealFieldMunicipality)))
 	}
 
 	return models.ProjectRow{
@@ -852,9 +937,7 @@ func mapDealToProjectRow(deal map[string]any, enumLabels map[string]map[string]s
 		Description:  description,
 		ProjectStage: stageName,
 		Progress:     progress,
-		// "Меры поддержки по проекту" в итоговом паспорте должны заполняться только
-		// из поля-связки на сделки (UF_CRM_1770268007), без fallback на enum-поле.
-		Support: "",
+		Support:      "",
 		DateRange: strings.TrimSpace(strings.TrimSpace(toString(anyMapGet(deal, "BEGINDATE"))) +
 			func() string {
 				end := strings.TrimSpace(toString(anyMapGet(deal, "CLOSEDATE")))
@@ -902,7 +985,11 @@ func normalizeJobs(v string) string {
 	return ""
 }
 
-func (c *Client) applySupportFromLinkedDeals(ctx context.Context, items []map[string]any, rows []models.ProjectRow, enumLabels map[string]map[string]string) {
+func (c *Client) applySupportFromLinkedDeals(
+	ctx context.Context,
+	items []map[string]any,
+	rows []models.ProjectRow,
+	enumLabels map[string]map[string]string) {
 	linkField := strings.TrimSpace(c.supportLinkDealField)
 	if linkField == "" || len(items) == 0 || len(rows) == 0 {
 		return
@@ -946,7 +1033,10 @@ func (c *Client) applySupportFromLinkedDeals(ctx context.Context, items []map[st
 	}
 }
 
-func (c *Client) loadSupportValuesByDealIDs(ctx context.Context, ids []int, enumLabels map[string]map[string]string) map[int]string {
+func (c *Client) loadSupportValuesByDealIDs(
+	ctx context.Context,
+	ids []int,
+	enumLabels map[string]map[string]string) map[int]string {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -966,10 +1056,15 @@ func (c *Client) loadSupportValuesByDealIDs(ctx context.Context, ids []int, enum
 		for _, id := range ids[i:end] {
 			idValues = append(idValues, strconv.Itoa(id))
 		}
-		resp, err := c.callWithRetry(ctx, "crm.deal.list", map[string]any{
-			"filter": map[string]any{"ID": idValues},
-			"select": []string{"ID", "TITLE", "STAGE_ID", field},
-		})
+		resp, err := c.callWithRetry(
+			ctx,
+			"crm.deal.list",
+			map[string]any{
+				"filter": map[string]any{
+					"ID": idValues,
+				},
+				"select": []string{"ID", "TITLE", "STAGE_ID", field},
+			})
 		if err != nil {
 			continue
 		}
@@ -984,7 +1079,8 @@ func (c *Client) loadSupportValuesByDealIDs(ctx context.Context, ids []int, enum
 			if meta, ok := stageLabels[stageID]; ok && strings.TrimSpace(meta.Name) != "" {
 				stageName = strings.TrimSpace(meta.Name)
 			}
-			measure := strings.TrimSpace(enumValue(enumLabels, field, toString(anyMapGet(item, field))))
+			measure := strings.TrimSpace(
+				enumValue(enumLabels, field, toString(anyMapGet(item, field))))
 
 			parts := make([]string, 0, 4)
 			if title != "" {
@@ -1026,9 +1122,15 @@ func extractIDsFromAny(raw any) []int {
 	return uniqueInts(out)
 }
 
-func (c *Client) loadEnumLabels(ctx context.Context) (map[string]map[string]string, error) {
+func (c *Client) loadEnumLabels(
+	ctx context.Context) (map[string]map[string]string,
+	error) {
 	out := make(map[string]map[string]string)
-	resp, err := c.callWithRetry(ctx, "crm.deal.fields", nil)
+	resp, err := c.callWithRetry(
+		ctx,
+		"crm.deal.fields",
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1064,7 +1166,11 @@ func (c *Client) loadEnumLabels(ctx context.Context) (map[string]map[string]stri
 	return out, nil
 }
 
-func enumValue(enumLabels map[string]map[string]string, fieldCode, raw string) string {
+func enumValue(
+	enumLabels map[string]map[string]string,
+	fieldCode,
+	raw string,
+) string {
 	v := strings.TrimSpace(raw)
 	if v == "" {
 		return ""
@@ -1122,10 +1228,15 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (c *Client) loadDealStageMeta(ctx context.Context) (map[string]stageMeta, error) {
-	resp, err := c.callWithRetry(ctx, "crm.status.list", map[string]any{
-		"order": map[string]string{"SORT": "ASC"},
-	})
+func (c *Client) loadDealStageMeta(
+	ctx context.Context) (map[string]stageMeta,
+	error) {
+	resp, err := c.callWithRetry(
+		ctx,
+		"crm.status.list",
+		map[string]any{
+			"order": map[string]string{"SORT": "ASC"},
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -1154,7 +1265,9 @@ func (c *Client) loadDealStageMeta(ctx context.Context) (map[string]stageMeta, e
 	return out, nil
 }
 
-func taskBoundToDeal(task map[string]any, binding string) bool {
+func taskBoundToDeal(
+	task map[string]any,
+	binding string) bool {
 	binding = strings.ToUpper(strings.TrimSpace(binding))
 	if binding == "" {
 		return false
