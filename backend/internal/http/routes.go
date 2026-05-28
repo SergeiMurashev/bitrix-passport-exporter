@@ -14,6 +14,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	h.regExportRoutes(mux, guard)
 }
 
+const (
+	handleAssets   = "assets"
+	handleFrontend = "frontend"
+	handleDist     = "dist"
+)
+
 // regHealthRoutes регистрирует конечные точки работоспособности/готовности.
 func (h *Handler) regHealthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.healthz)
@@ -22,11 +28,8 @@ func (h *Handler) regHealthRoutes(mux *http.ServeMux) {
 
 // regStaticRoutes регистрирует статические файлы и точку входа пользовательского интерфейса.
 func (h *Handler) regStaticRoutes(mux *http.ServeMux) {
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), "assets")))))
-	mux.Handle("/invest-agent-logo-dark.png", http.FileServer(http.Dir(frontendDistDir())))
-	mux.Handle("/invest-agent-logo-light.png", http.FileServer(http.Dir(frontendDistDir())))
-	mux.Handle("/logo1.png", http.FileServer(http.Dir(frontendDistDir())))
-	/* Маршруты для устанвоки на портал приложения */
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDistDir(), handleAssets)))))
+	/* Маршруты для установки приложения в портал */
 	mux.Handle("/bitrix/app", http.HandlerFunc(h.ui))
 	mux.Handle("/bitrix/install", http.HandlerFunc(h.ui))
 	/* Внутренний маршрут приложения */
@@ -54,5 +57,5 @@ func (h *Handler) regExportRoutes(mux *http.ServeMux, guard func(http.Handler) h
 }
 
 func frontendDistDir() string {
-	return filepath.Clean(filepath.Join("..", "frontend", "dist"))
+	return filepath.Clean(filepath.Join("..", handleFrontend, handleDist))
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/config"
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 type Handler struct {
@@ -50,7 +51,7 @@ func New(cfg config.Config) (*Handler, error) {
 			time.Minute,
 		),
 		portalSessions: make(map[string]portalSession),
-		status:         exportStatus{Phase: "idle"},
+		status:         exportStatus{Phase: models.PhaseIdle},
 	}, nil
 }
 

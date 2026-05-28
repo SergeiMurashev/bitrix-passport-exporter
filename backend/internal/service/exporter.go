@@ -40,7 +40,7 @@ func NewExporter(
 		taskWorkers = 8
 	}
 	if strategy == "" {
-		strategy = "per_deal"
+		strategy = models.StrategyPerDeal
 	}
 	return &Exporter{
 		bitrix:      client,

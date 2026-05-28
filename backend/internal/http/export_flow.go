@@ -95,7 +95,7 @@ func (h *Handler) collectExportData(
 			err.Error())
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
-	if len(projects) == 0 && sourceLabel != "bitrix_api" {
+	if len(projects) == 0 && sourceLabel != models.BitrixApi {
 		h.markStatusError("no projects found")
 		*auditErrText = "no projects found"
 		writeMappedError(w, errNoProjectsFound, "no projects found")
@@ -107,7 +107,7 @@ func (h *Handler) collectExportData(
 		h.cfg.TaskWorkers,
 		h.cfg.TaskStrategy,
 	)
-	isFullBitrixExport := sourceLabel == "bitrix_api"
+	isFullBitrixExport := sourceLabel == models.BitrixApi
 	allowTitleFallback := !isFullBitrixExport
 
 	var (
@@ -145,7 +145,7 @@ func (h *Handler) collectExportData(
 			processed += len(page.Rows)
 			pageDealsWithSupport, pageSupportMeasures := collectSupportStats(page.Rows)
 			log.WithFields(log.Fields{
-				"phase":                 "passport",
+				"phase":                 models.PhasePassport,
 				"deals_page_start":      start,
 				"deals_page_size":       len(page.Rows),
 				"deals_processed":       processed,
@@ -155,7 +155,7 @@ func (h *Handler) collectExportData(
 				"support_measures_page": pageSupportMeasures,
 			}).Info("full export deals page processed")
 			h.setStatus(func(s *exportStatus) {
-				s.Phase = "passport"
+				s.Phase = models.PhasePassport
 				s.DealsProcessed = processed
 				s.DealsWithSupport += pageDealsWithSupport
 				s.SupportMeasuresTotal += pageSupportMeasures
@@ -168,11 +168,11 @@ func (h *Handler) collectExportData(
 		}
 
 		h.setStatus(func(s *exportStatus) {
-			s.Phase = "tasks"
+			s.Phase = models.PhaseTasks
 			s.DealsTotal = len(allProjects)
 		})
 
-		if strings.EqualFold(h.cfg.TaskStrategy, "bulk") {
+		if strings.EqualFold(h.cfg.TaskStrategy, models.StrategyBulk) {
 			allTasks, allStats, allIssues, allErr := svc.BuildTasks(
 				ctx,
 				allProjects,
@@ -186,7 +186,7 @@ func (h *Handler) collectExportData(
 			issues = allIssues
 			stats = mergeExportStats(stats, allStats)
 			h.setStatus(func(s *exportStatus) {
-				s.Phase = "tasks"
+				s.Phase = models.PhaseTasks
 				s.DealsProcessed = len(allProjects)
 				s.TasksTotal = len(tasks)
 			})
@@ -215,7 +215,7 @@ func (h *Handler) collectExportData(
 				issues = append(issues, chunkIssues...)
 				stats = mergeExportStats(stats, chunkStats)
 				h.setStatus(func(s *exportStatus) {
-					s.Phase = "tasks"
+					s.Phase = models.PhaseTasks
 					s.DealsProcessed = end
 					s.TasksTotal = len(tasks)
 				})
@@ -346,7 +346,7 @@ func (h *Handler) completeExportSuccess(
 		s.Running = false
 		s.CanCancel = false
 		s.CancelRequested = false
-		s.Phase = "idle"
+		s.Phase = models.PhaseIdle
 		s.DealsWithSupport = stats.DealsWithSupport
 		s.SupportMeasuresTotal = stats.SupportMeasuresTotal
 		s.FinishedAt = time.Now().UTC()

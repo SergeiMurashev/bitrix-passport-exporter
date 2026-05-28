@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 type Config struct {
@@ -35,7 +37,7 @@ func Load() Config {
 		BitrixAppClientID:             env("BITRIX_APP_CLIENT_ID", ""),
 		BitrixAppClientSecret:         env("BITRIX_APP_CLIENT_SECRET", ""),
 		TaskWorkers:                   envInt("TASK_WORKERS", 10),
-		TaskStrategy:                  env("TASK_STRATEGY", "per_deal"),
+		TaskStrategy:                  env("TASK_STRATEGY", models.StrategyPerDeal),
 		DeleteLastExportAfterDownload: envBool("DELETE_LAST_EXPORT_AFTER_DOWNLOAD", false),
 		HTTPReadTimeoutSeconds:        envInt("HTTP_READ_TIMEOUT_SECONDS", 20),
 		HTTPWriteTimeoutSeconds:       envInt("HTTP_WRITE_TIMEOUT_SECONDS", 3600),
@@ -53,7 +55,7 @@ func (c Config) Validate() error {
 		return errors.New("ADDR is empty")
 	}
 	strategy := strings.ToLower(strings.TrimSpace(c.TaskStrategy))
-	if strategy != "bulk" && strategy != "per_deal" {
+	if strategy != models.StrategyBulk && strategy != models.StrategyPerDeal {
 		return fmt.Errorf("TASK_STRATEGY must be one of: bulk, per_deal (got %q)", c.TaskStrategy)
 	}
 	if strings.TrimSpace(c.BitrixAppClientID) == "" {

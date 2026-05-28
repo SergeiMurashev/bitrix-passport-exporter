@@ -79,7 +79,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.Running = true
 		s.CanCancel = true
 		s.CancelRequested = false
-		s.Phase = "passport"
+		s.Phase = models.PhasePassport
 		s.DealsProcessed = 0
 		s.DealsTotal = 0
 		s.TasksTotal = 0
@@ -236,7 +236,7 @@ func (h *Handler) markStatusError(message string) {
 		s.Running = false
 		s.CanCancel = false
 		s.CancelRequested = false
-		s.Phase = "error"
+		s.Phase = models.PhaseError
 		s.LastError = message
 		s.FinishedAt = time.Now().UTC()
 	})
@@ -247,7 +247,7 @@ func (h *Handler) markStatusCanceledByUser() {
 		s.Running = false
 		s.CanCancel = false
 		s.CancelRequested = false
-		s.Phase = "canceled"
+		s.Phase = models.PhaseCanceled
 		s.LastError = "export canceled by user"
 		s.FinishedAt = time.Now().UTC()
 	})
@@ -314,7 +314,7 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	running := h.status.Running
 	alreadyRequested := h.cancelRequestedByUser
 	phase := h.status.Phase
-	active := running || busy || strings.EqualFold(phase, "tasks") || strings.EqualFold(phase, "passport")
+	active := running || busy || strings.EqualFold(phase, models.PhaseTasks) || strings.EqualFold(phase, models.PhasePassport)
 	h.cancelRequestedByUser = true
 	h.status.CancelRequested = true
 
@@ -324,7 +324,7 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 		h.status.Running = false
 		h.status.CanCancel = false
 		h.status.CancelRequested = false
-		h.status.Phase = "canceled"
+		h.status.Phase = models.PhaseCanceled
 		h.status.LastError = "export canceled by user (forced)"
 		h.status.FinishedAt = time.Now().UTC()
 		h.mu.Unlock()
@@ -351,7 +351,7 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 		h.fullExportBusy = false
 		h.status.Running = false
 		h.status.CanCancel = false
-		h.status.Phase = "canceled"
+		h.status.Phase = models.PhaseCanceled
 		h.status.LastError = "export canceled by user (forced reset)"
 		h.status.FinishedAt = time.Now().UTC()
 		log.WithFields(log.Fields{

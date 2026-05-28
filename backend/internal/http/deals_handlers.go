@@ -15,6 +15,17 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	exportFormatXLSX       = "xlsx"
+	exportFormatDOCX       = "docx"
+	exportFileBaseDefault  = "bitrix_export"
+	exportFileBaseAllDeals = "bitrix_all_deals"
+	bitrixDealLabelFmt     = "bitrix_deal_%d"
+	bitrixDealsLabelFmt    = "bitrix_deals_%d"
+)
+
+var sanitizeASCIIRegex = regexp.MustCompile(`[^a-z0-9._-]+`)
+
 // dealIDs godoc
 // @Summary      Получить ID сделок из Bitrix24
 // @Description  Загружает полный список ID сделок
@@ -44,7 +55,11 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	deals, err := bClient.ListDealIDs(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal ids load failed")
-		writeMappedError(w, errDealIDsLoadFailed, "failed to load deal ids: "+err.Error())
+		writeMappedError(
+			w,
+			errDealIDsLoadFailed,
+			"failed to load deal ids: "+err.Error(),
+		)
 		return
 	}
 
@@ -87,7 +102,11 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	fields, err := bClient.ListDealFields(ctx)
 	if err != nil {
 		log.WithError(err).Error("deal fields load failed")
-		writeMappedError(w, errDealFieldsLoadFailed, "failed to load deal fields: "+err.Error())
+		writeMappedError(
+			w,
+			errDealFieldsLoadFailed,
+			"failed to load deal fields: "+err.Error(),
+		)
 		return
 	}
 	writeAPISuccess(
@@ -95,7 +114,10 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 		http.StatusOK,
 		"deal_fields_loaded",
 		"Поля сделок загружены",
-		models.DealFieldsData{Count: len(fields), Fields: mapDealFields(fields)},
+		models.DealFieldsData{
+			Count:  len(fields),
+			Fields: mapDealFields(fields),
+		},
 		nil,
 	)
 }
@@ -128,7 +150,7 @@ func (h *Handler) loadProjects(
 	r *http.Request,
 	bClient *bitrix.Client,
 	dealIDs []int) ([]models.ProjectRow, string, error) {
-	file, fh, err := r.FormFile("file")
+	file, fh, err := r.FormFile(models.FormatFile)
 	if err == nil {
 		defer file.Close()
 		projects, parseErr := parser.ParseDealsInput(file)
@@ -142,7 +164,7 @@ func (h *Handler) loadProjects(
 		return nil, "", fmt.Errorf("invalid file field: %w", err)
 	}
 	if len(dealIDs) == 0 {
-		return nil, "bitrix_api", nil
+		return nil, models.BitrixApi, nil
 	}
 
 	projects, err := bClient.GetDealsByIDs(ctx, dealIDs)
@@ -152,12 +174,12 @@ func (h *Handler) loadProjects(
 		}
 		return nil, "", fmt.Errorf("failed to load deals from bitrix: %w", err)
 	}
-	label := "bitrix_api"
+	label := models.BitrixApi
 	if len(dealIDs) == 1 {
-		label = fmt.Sprintf("bitrix_deal_%d", dealIDs[0])
+		label = fmt.Sprintf(bitrixDealLabelFmt, dealIDs[0])
 	}
 	if len(dealIDs) > 1 {
-		label = fmt.Sprintf("bitrix_deals_%d", len(dealIDs))
+		label = fmt.Sprintf(bitrixDealsLabelFmt, len(dealIDs))
 	}
 	return projects, label, nil
 }
@@ -200,10 +222,10 @@ func buildDownloadFilename(src string, dealIDs []int, format string) string {
 	base = strings.TrimSuffix(base, ".html")
 	base = sanitizeASCII(base)
 	if base == "" {
-		base = "bitrix_export"
+		base = exportFileBaseDefault
 	}
-	if len(dealIDs) == 0 && strings.EqualFold(src, "bitrix_api") {
-		base = "bitrix_all_deals"
+	if len(dealIDs) == 0 && strings.EqualFold(src, models.BitrixApi) {
+		base = exportFileBaseAllDeals
 	}
 	if len(dealIDs) == 1 {
 		base = fmt.Sprintf("deal_%d", dealIDs[0])
@@ -211,8 +233,8 @@ func buildDownloadFilename(src string, dealIDs []int, format string) string {
 	if len(dealIDs) > 1 {
 		base = fmt.Sprintf("deals_%d", len(dealIDs))
 	}
-	ext := ".xlsx"
-	if strings.EqualFold(strings.TrimSpace(format), "docx") {
+	ext := "." + exportFormatXLSX
+	if strings.EqualFold(strings.TrimSpace(format), exportFormatDOCX) {
 		ext = ".docx"
 	}
 	return base + "_passport_and_tasks" + ext
@@ -220,19 +242,23 @@ func buildDownloadFilename(src string, dealIDs []int, format string) string {
 
 func parseExportFormat(raw string) (string, error) {
 	f := strings.ToLower(strings.TrimSpace(raw))
-	if f == "" || f == "xlsx" {
-		return "xlsx", nil
+	if f == "" || f == exportFormatXLSX {
+		return exportFormatXLSX, nil
 	}
-	if f == "docx" {
-		return "docx", nil
+	if f == exportFormatDOCX {
+		return exportFormatDOCX, nil
 	}
-	return "", fmt.Errorf("unsupported export format %q, expected xlsx or docx", raw)
+	return "", fmt.Errorf(
+		"unsupported export format %q, expected %s or %s",
+		raw,
+		exportFormatXLSX,
+		exportFormatDOCX,
+	)
 }
 
 func sanitizeASCII(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	re := regexp.MustCompile(`[^a-z0-9._-]+`)
-	s = re.ReplaceAllString(s, "_")
+	s = sanitizeASCIIRegex.ReplaceAllString(s, "_")
 	s = strings.Trim(s, "._-")
 	if len(s) > 80 {
 		s = s[:80]

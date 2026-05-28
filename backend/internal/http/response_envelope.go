@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 type apiErrorPayload struct {
@@ -30,13 +32,13 @@ type apiResponse struct {
 var (
 	errMethodNotAllowed = apiErrorDef{
 		HTTPCode: http.StatusMethodNotAllowed,
-		Status:   "method_not_allowed",
+		Status:   models.StatusMethodNotAllowed,
 		Message:  "Метод не поддерживается",
 		Code:     "METHOD_NOT_ALLOWED",
 	}
 	errUnauthorized = apiErrorDef{
 		HTTPCode: http.StatusUnauthorized,
-		Status:   "unauthorized",
+		Status:   models.StatusUnauthorized,
 		Message:  "Требуется авторизация",
 		Code:     "AUTH_REQUIRED",
 	}
@@ -46,7 +48,7 @@ func writeAPIResponse(
 	w http.ResponseWriter,
 	httpCode int,
 	body apiResponse) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Type", models.ContentTypeJSONUTF8)
 	w.WriteHeader(httpCode)
 	_ = json.NewEncoder(w).Encode(body)
 }
@@ -58,7 +60,7 @@ func writeAPISuccess(
 	data any,
 	meta any) {
 	if strings.TrimSpace(status) == "" {
-		status = "success"
+		status = models.StatusSuccess
 	}
 	writeAPIResponse(w, httpCode, apiResponse{
 		OK:      true,
@@ -78,7 +80,7 @@ func writeAPIError(
 	detail string,
 	meta any) {
 	if strings.TrimSpace(status) == "" {
-		status = "error"
+		status = models.StatusError
 	}
 	writeAPIResponse(w, httpCode, apiResponse{
 		OK:      false,

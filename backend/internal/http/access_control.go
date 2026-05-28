@@ -5,22 +5,28 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
 )
 
 func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 	token := strings.TrimSpace(h.cfg.APIAccessToken)
 	useToken := token != ""
 	unauthorized := func(w http.ResponseWriter) {
-		writeAPIErrorDefSimple(w, errUnauthorized, "unauthorized")
+		writeAPIErrorDefSimple(
+			w,
+			errUnauthorized,
+			models.StatusUnauthorized,
+		)
 	}
 
 	tokenAllowed := func(r *http.Request) bool {
 		candidates := []string{
-			strings.TrimSpace(r.Header.Get("X-API-Key")),
-			strings.TrimSpace(r.Header.Get("X-Access-Token")),
+			strings.TrimSpace(r.Header.Get(models.XApiKey)),
+			strings.TrimSpace(r.Header.Get(models.XAccessToken)),
 		}
-		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		authHeader := strings.TrimSpace(r.Header.Get(models.Auth))
+		if strings.HasPrefix(strings.ToLower(authHeader), models.Bearer) {
 			candidates = append(candidates, strings.TrimSpace(authHeader[7:]))
 		}
 		for _, c := range candidates {
@@ -51,13 +57,13 @@ func clientIPFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+	if forwarded := strings.TrimSpace(r.Header.Get(models.XApiKey)); forwarded != "" {
 		parts := strings.Split(forwarded, ",")
 		if len(parts) > 0 {
 			return strings.TrimSpace(parts[0])
 		}
 	}
-	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+	if realIP := strings.TrimSpace(r.Header.Get(models.XRealIP)); realIP != "" {
 		return realIP
 	}
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
