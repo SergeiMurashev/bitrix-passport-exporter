@@ -30,13 +30,6 @@ type ApiResponse<T> = {
   error?: ApiError
   meta?: Record<string, unknown>
 }
-type AuthMeData = {
-  user?: {
-    id: number
-    login: string
-  }
-  expires_at?: string
-}
 type PortalMeData = {
   ready?: boolean
   user?: {
@@ -635,7 +628,6 @@ async function refreshExportStatus() {
         cancelExportBtn.classList.add('hidden')
       }
       setProgress(true, detectPhase(data))
-      const total = data.deals_total > 0 ? data.deals_total : '?'
       setStatus(
         `Выполняется выгрузка. Текущий этап: ${humanizePhaseCode(data.phase)}.`,
         'muted',
@@ -715,7 +707,7 @@ function startStatusPolling() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    if (!topUser.classList.contains('hidden')) {
+    if (!form.classList.contains('hidden')) {
       startStatusPolling()
       void refreshExportStatus()
     }

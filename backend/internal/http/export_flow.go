@@ -68,15 +68,19 @@ func (h *Handler) collectExportData(
 	w http.ResponseWriter,
 	r *http.Request,
 	req exportRequest,
-	auditErrText *string,
-) ([]models.ProjectRow, []models.TaskRow, []string, service.ExportStats, string, bool) {
+	auditErrText *string) ([]models.ProjectRow, []models.TaskRow, []string, service.ExportStats, string, bool) {
 	bClient, ok := h.newBitrixClientFromRequest(w, r)
 	if !ok {
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
 	bClient.ConfigureSupportMapping(h.cfg.SupportLinkDealField, h.cfg.SupportMeasureValueField)
 
-	projects, sourceLabel, err := h.loadProjects(ctx, r, bClient, req.dealIDs)
+	projects, sourceLabel, err := h.loadProjects(
+		ctx,
+		r,
+		bClient,
+		req.dealIDs,
+	)
 	if err != nil {
 		if isCanceledErr(err) {
 			h.respondExportCanceled(w, auditErrText)
@@ -85,7 +89,10 @@ func (h *Handler) collectExportData(
 		h.markStatusError(err.Error())
 		*auditErrText = err.Error()
 		log.WithError(err).Error("export load projects failed")
-		writeMappedError(w, errProjectsLoadFailed, err.Error())
+		writeMappedError(
+			w,
+			errProjectsLoadFailed,
+			err.Error())
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
 	if len(projects) == 0 && sourceLabel != "bitrix_api" {
@@ -95,7 +102,11 @@ func (h *Handler) collectExportData(
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
 
-	svc := service.NewExporter(bClient, h.cfg.TaskWorkers, h.cfg.TaskStrategy)
+	svc := service.NewExporter(
+		bClient,
+		h.cfg.TaskWorkers,
+		h.cfg.TaskStrategy,
+	)
 	isFullBitrixExport := sourceLabel == "bitrix_api"
 	allowTitleFallback := !isFullBitrixExport
 
@@ -112,7 +123,11 @@ func (h *Handler) collectExportData(
 		var allProjects []models.ProjectRow
 
 		for {
-			page, pageErr := bClient.GetDealsPage(ctx, start, pageSize)
+			page, pageErr := bClient.GetDealsPage(
+				ctx,
+				start,
+				pageSize,
+			)
 			if pageErr != nil {
 				if isCanceledErr(pageErr) {
 					h.respondExportCanceled(w, nil)
@@ -182,9 +197,18 @@ func (h *Handler) collectExportData(
 					end = len(allProjects)
 				}
 				chunk := allProjects[i:end]
-				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(ctx, chunk, req.projectField, allowTitleFallback)
+				chunkTasks, chunkStats, chunkIssues, chunkErr := svc.BuildTasks(
+					ctx,
+					chunk,
+					req.projectField,
+					allowTitleFallback,
+				)
 				if chunkErr != nil {
-					h.handleTasksCollectError(w, chunkErr, auditErrText)
+					h.handleTasksCollectError(
+						w,
+						chunkErr,
+						auditErrText,
+					)
 					return nil, nil, nil, service.ExportStats{}, "", false
 				}
 				tasks = append(tasks, chunkTasks...)
@@ -214,7 +238,8 @@ func (h *Handler) collectExportData(
 			ctx,
 			projects,
 			req.projectField,
-			allowTitleFallback)
+			allowTitleFallback,
+		)
 		if callErr != nil {
 			h.handleTasksCollectError(w, callErr, auditErrText)
 			return nil, nil, nil, service.ExportStats{}, "", false
@@ -285,11 +310,19 @@ func (h *Handler) handleTasksCollectError(
 	}
 	h.markStatusError(detail)
 	if strings.Contains(strings.ToLower(err.Error()), "bitrix auth failed") {
-		writeMappedError(w, errBitrixAuthFailed, "bitrix auth token is invalid or expired")
+		writeMappedError(
+			w,
+			errBitrixAuthFailed,
+			"bitrix auth token is invalid or expired",
+		)
 		return
 	}
 
-	writeMappedError(w, errTasksCollectFailed, detail)
+	writeMappedError(
+		w,
+		errTasksCollectFailed,
+		detail,
+	)
 }
 
 func (h *Handler) completeExportSuccess(
@@ -303,7 +336,11 @@ func (h *Handler) completeExportSuccess(
 	stats service.ExportStats,
 	exportStartedAt time.Time,
 ) {
-	filename := buildDownloadFilename(sourceLabel, dealIDs, exportFormat)
+	filename := buildDownloadFilename(
+		sourceLabel,
+		dealIDs,
+		exportFormat,
+	)
 	h.storeLastResult(result, filename, contentType)
 	h.setStatus(func(s *exportStatus) {
 		s.Running = false

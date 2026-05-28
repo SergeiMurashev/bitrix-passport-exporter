@@ -90,7 +90,13 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		s.LastError = ""
 	})
 
-	projects, tasks, issues, computedStats, loadedSourceLabel, ok := h.collectExportData(ctx, w, r, req, &exportErrText)
+	projects, tasks, issues, computedStats, loadedSourceLabel, ok := h.collectExportData(
+		ctx,
+		w,
+		r,
+		req,
+		&exportErrText,
+	)
 	if !ok {
 		return
 	}
@@ -100,7 +106,13 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		log.WithField("issue", issue).Debug("export issue")
 	}
 
-	result, contentType, ok := h.buildExportBinary(w, req.exportFormat, projects, tasks, &exportErrText)
+	result, contentType, ok := h.buildExportBinary(
+		w,
+		req.exportFormat,
+		projects,
+		tasks,
+		&exportErrText,
+	)
 	if !ok {
 		return
 	}
@@ -183,7 +195,10 @@ func (h *Handler) setStatus(update func(*exportStatus)) {
 	update(&h.status)
 }
 
-func (h *Handler) storeLastResult(data []byte, filename, contentType string) {
+func (h *Handler) storeLastResult(
+	data []byte,
+	filename,
+	contentType string) {
 	if len(data) == 0 {
 		return
 	}
@@ -397,7 +412,11 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	contentType := strings.TrimSpace(h.lastContentType)
 	h.mu.Unlock()
 	if path == "" {
-		writeMappedError(w, errExportFileNotFound, "no ready export file")
+		writeMappedError(
+			w,
+			errExportFileNotFound,
+			"no ready export file",
+		)
 		return
 	}
 	if strings.TrimSpace(filename) == "" {
@@ -412,7 +431,11 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		writeMappedError(w, errExportFileNotFound, "no ready export file")
+		writeMappedError(
+			w,
+			errExportFileNotFound,
+			"no ready export file",
+		)
 		return
 	}
 	defer f.Close()

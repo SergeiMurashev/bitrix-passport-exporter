@@ -34,7 +34,11 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		writeAPIErrorDefSimple(w, errMethodNotAllowed, "method not allowed")
+		writeAPIErrorDefSimple(
+			w,
+			errMethodNotAllowed,
+			"method not allowed",
+		)
 		return
 	}
 	_ = h.bootstrapPortalSessionFromRequest(w, r)

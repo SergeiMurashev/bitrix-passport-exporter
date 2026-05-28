@@ -69,10 +69,6 @@ func (c Config) Validate() error {
 }
 
 func loadDotEnvIfPresent() {
-	// Поддержка общих каталогов запуска:
-	// - корень проекта: ".env"
-	// - внутренний каталог: "../.env"
-	// - вложенные пути (резервный вариант): "../../.env"
 	candidates := []string{".env", "../.env", "../../.env"}
 	for _, path := range candidates {
 		if !loadDotEnvFile(path) {
