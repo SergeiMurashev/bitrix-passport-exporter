@@ -409,12 +409,6 @@ func repairBrokenUTF8LeadBytes(s string) string {
 			continue
 		}
 
-		// Голые C1-контролы (0x80..0x9F) удаляем.
-		if in[i] >= 0x80 && in[i] <= 0x9F {
-			i++
-			continue
-		}
-
 		out = append(out, in[i])
 		i++
 	}
