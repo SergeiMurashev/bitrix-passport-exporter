@@ -19,9 +19,6 @@ func (h *Handler) withAccessControl(next http.Handler) http.Handler {
 			strings.TrimSpace(r.Header.Get("X-API-Key")),
 			strings.TrimSpace(r.Header.Get("X-Access-Token")),
 		}
-		if c, err := r.Cookie("bp_api_token"); err == nil {
-			candidates = append(candidates, strings.TrimSpace(c.Value))
-		}
 		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 			candidates = append(candidates, strings.TrimSpace(authHeader[7:]))
