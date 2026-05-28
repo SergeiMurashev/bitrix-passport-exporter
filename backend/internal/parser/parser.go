@@ -377,9 +377,6 @@ func sanitizeText(s string) string {
 	return strings.TrimSpace(repaired)
 }
 
-// repairBrokenUTF8LeadBytes лечит частый дефект во входных HTML/.xls:
-// вместо кириллической буквы приходит пара [U+FFFD][U+0080..U+00BF]
-// (потерян первый байт UTF-8 последовательности D0).
 func repairBrokenUTF8LeadBytes(s string) string {
 	if s == "" {
 		return s
@@ -387,9 +384,6 @@ func repairBrokenUTF8LeadBytes(s string) string {
 	in := []byte(s)
 	out := make([]byte, 0, len(in))
 	for i := 0; i < len(in); {
-		// Типичный дефект:
-		// корректная буква "П" (D0 9F) приходит как "EF BF BD 9F".
-		// Восстанавливаем D0 + continuation-byte.
 		if i+3 < len(in) &&
 			in[i] == 0xEF &&
 			in[i+1] == 0xBF &&
@@ -400,7 +394,6 @@ func repairBrokenUTF8LeadBytes(s string) string {
 			continue
 		}
 
-		// Отдельные replacement-символы выбрасываем.
 		if i+2 < len(in) &&
 			in[i] == 0xEF &&
 			in[i+1] == 0xBF &&
