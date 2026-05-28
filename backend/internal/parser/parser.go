@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/SergeiMurashev/bitrix-passport-exporter/internal/models"
@@ -226,23 +227,23 @@ func hasAnyColumn(m map[string]string, key string) bool {
 func getCell(m map[string]string, key string) string {
 	aliases, ok := columnAliases[key]
 	if !ok {
-		return strings.TrimSpace(m[key])
+		return sanitizeText(m[key])
 	}
 	for _, alias := range aliases {
 		if v, exists := m[alias]; exists && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
+			return sanitizeText(v)
 		}
 	}
 	for _, alias := range aliases {
 		if v, exists := m[alias]; exists {
-			return strings.TrimSpace(v)
+			return sanitizeText(v)
 		}
 	}
 	return ""
 }
 
 func cleanSpaces(s string) string {
-	return strings.TrimSpace(strings.Join(strings.Fields(stripHTML(s)), " "))
+	return sanitizeText(strings.Join(strings.Fields(stripHTML(s)), " "))
 }
 
 func stripHTML(s string) string {
@@ -359,11 +360,65 @@ func cleanDescription(text string) string {
 	if result == "" {
 		return ""
 	}
-	return strings.ToUpper(result[:1]) + result[1:]
+	runes := []rune(result)
+	if len(runes) == 0 {
+		return ""
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }
 
 func cleanProgress(text string) string {
 	return cleanDescription(text)
+}
+
+func sanitizeText(s string) string {
+	repaired := repairBrokenUTF8LeadBytes(s)
+	return strings.TrimSpace(repaired)
+}
+
+// repairBrokenUTF8LeadBytes лечит частый дефект во входных HTML/.xls:
+// вместо кириллической буквы приходит пара [U+FFFD][U+0080..U+00BF]
+// (потерян первый байт UTF-8 последовательности D0).
+func repairBrokenUTF8LeadBytes(s string) string {
+	if s == "" {
+		return s
+	}
+	in := []byte(s)
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); {
+		// Типичный дефект:
+		// корректная буква "П" (D0 9F) приходит как "EF BF BD 9F".
+		// Восстанавливаем D0 + continuation-byte.
+		if i+3 < len(in) &&
+			in[i] == 0xEF &&
+			in[i+1] == 0xBF &&
+			in[i+2] == 0xBD &&
+			in[i+3] >= 0x80 && in[i+3] <= 0xBF {
+			out = append(out, 0xD0, in[i+3])
+			i += 4
+			continue
+		}
+
+		// Отдельные replacement-символы выбрасываем.
+		if i+2 < len(in) &&
+			in[i] == 0xEF &&
+			in[i+1] == 0xBF &&
+			in[i+2] == 0xBD {
+			i += 3
+			continue
+		}
+
+		// Голые C1-контролы (0x80..0x9F) удаляем.
+		if in[i] >= 0x80 && in[i] <= 0x9F {
+			i++
+			continue
+		}
+
+		out = append(out, in[i])
+		i++
+	}
+	return string(bytes.ToValidUTF8(out, nil))
 }
 
 func formatDateRange(start, end string) string {
