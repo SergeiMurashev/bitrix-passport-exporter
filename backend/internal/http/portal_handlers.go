@@ -22,7 +22,7 @@ func (h *Handler) portalSessionBootstrap(w http.ResponseWriter, r *http.Request)
 	writeAPISuccess(
 		w,
 		http.StatusOK,
-		"portal_session_ready",
+		models.StatusReadyPortalSession,
 		"Контекст портала Bitrix24 сохранен",
 		models.PortalSessionData{Ready: true},
 		nil,
@@ -45,7 +45,7 @@ func (h *Handler) portalMe(w http.ResponseWriter, r *http.Request) {
 	writeAPISuccess(
 		w,
 		http.StatusOK,
-		"portal_session_active",
+		models.StatusActivePortalSession,
 		"Контекст портала активен",
 		models.PortalSessionData{
 			Ready:    true,

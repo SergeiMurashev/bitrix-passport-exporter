@@ -53,15 +53,16 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 
 	isFullExport := len(req.dealIDs) == 0
 	fullExportLocked := false
+	scope := h.portalScopeKey(r)
 	if isFullExport {
-		if !h.tryStartFullExport() {
+		if !h.tryStartFullExport(scope) {
 			writeMappedError(w, errExportAlreadyRunning, "full export is already running; please wait and retry")
 			return
 		}
 		fullExportLocked = true
 		defer func() {
 			if fullExportLocked {
-				h.finishFullExport()
+				h.finishFullExport(scope)
 			}
 		}()
 	}
@@ -72,10 +73,10 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), exportTimeout)
 	defer cancel()
-	h.setExportCancel(cancel)
-	defer h.clearExportCancel()
+	h.setExportCancel(scope, cancel)
+	defer h.clearExportCancel(scope)
 
-	h.setStatus(func(s *exportStatus) {
+	h.setStatus(scope, func(s *exportStatus) {
 		s.Running = true
 		s.CanCancel = true
 		s.CancelRequested = false
@@ -94,6 +95,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		ctx,
 		w,
 		r,
+		scope,
 		req,
 		&exportErrText,
 	)
@@ -107,6 +109,7 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, contentType, ok := h.buildExportBinary(
+		scope,
 		w,
 		req.exportFormat,
 		projects,
@@ -118,11 +121,12 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fullExportLocked {
-		h.finishFullExport()
+		h.finishFullExport(scope)
 		fullExportLocked = false
 	}
 	h.completeExportSuccess(
 		w,
+		scope,
 		req.dealIDs,
 		req.exportFormat,
 		sourceLabel,
@@ -134,68 +138,78 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-func (h *Handler) tryStartFullExport() bool {
+func (h *Handler) tryStartFullExport(scope string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.fullExportBusy {
-		if !h.status.Running {
+	st := h.ensureExportStateLocked(scope)
+	if st.fullExportBusy {
+		if !st.status.Running {
 			log.WithFields(log.Fields{
-				"phase":         h.status.Phase,
-				"started_at":    h.status.StartedAt,
-				"finished_at":   h.status.FinishedAt,
-				"last_error":    h.status.LastError,
-				"last_file":     h.status.LastFileName,
-				"cancel_marked": h.cancelRequestedByUser,
+				"scope":         scope,
+				"phase":         st.status.Phase,
+				"started_at":    st.status.StartedAt,
+				"finished_at":   st.status.FinishedAt,
+				"last_error":    st.status.LastError,
+				"last_file":     st.status.LastFileName,
+				"cancel_marked": st.cancelRequestedByUser,
 			}).Warn("stale full export lock detected, resetting")
-			h.fullExportBusy = false
-			h.fullExportCancel = nil
-			h.cancelRequestedByUser = false
+			st.fullExportBusy = false
+			st.fullExportCancel = nil
+			st.cancelRequestedByUser = false
 		}
 	}
-	if h.fullExportBusy {
+	if st.fullExportBusy {
 		log.WithFields(log.Fields{
-			"phase":       h.status.Phase,
-			"started_at":  h.status.StartedAt,
-			"cancel_mark": h.cancelRequestedByUser,
+			"scope":       scope,
+			"phase":       st.status.Phase,
+			"started_at":  st.status.StartedAt,
+			"cancel_mark": st.cancelRequestedByUser,
 		}).Info("full export start rejected: already running")
 		return false
 	}
-	h.fullExportBusy = true
-	log.WithField("started_at", time.Now().UTC()).Info("full export lock acquired")
+	st.fullExportBusy = true
+	log.WithFields(log.Fields{"scope": scope, "started_at": time.Now().UTC()}).Info("full export lock acquired")
 	return true
 }
 
-func (h *Handler) finishFullExport() {
+func (h *Handler) finishFullExport(scope string) {
 	h.mu.Lock()
-	wasBusy := h.fullExportBusy
-	h.fullExportBusy = false
+	st := h.ensureExportStateLocked(scope)
+	wasBusy := st.fullExportBusy
+	st.fullExportBusy = false
 	h.mu.Unlock()
 	if wasBusy {
-		log.WithField("finished_at", time.Now().UTC()).Info("full export lock released")
+		log.WithFields(log.Fields{"scope": scope, "finished_at": time.Now().UTC()}).Info("full export lock released")
 	}
 }
 
-func (h *Handler) setExportCancel(cancel context.CancelFunc) {
+func (h *Handler) setExportCancel(
+	scope string,
+	cancel context.CancelFunc) {
 	h.mu.Lock()
-	h.fullExportCancel = cancel
-	h.cancelRequestedByUser = false
+	st := h.ensureExportStateLocked(scope)
+	st.fullExportCancel = cancel
+	st.cancelRequestedByUser = false
 	h.mu.Unlock()
 }
 
-func (h *Handler) clearExportCancel() {
+func (h *Handler) clearExportCancel(scope string) {
 	h.mu.Lock()
-	h.fullExportCancel = nil
-	h.cancelRequestedByUser = false
+	st := h.ensureExportStateLocked(scope)
+	st.fullExportCancel = nil
+	st.cancelRequestedByUser = false
 	h.mu.Unlock()
 }
 
-func (h *Handler) setStatus(update func(*exportStatus)) {
+func (h *Handler) setStatus(scope string, update func(*exportStatus)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	update(&h.status)
+	st := h.ensureExportStateLocked(scope)
+	update(&st.status)
 }
 
 func (h *Handler) storeLastResult(
+	scope string,
 	data []byte,
 	filename,
 	contentType string) {
@@ -218,21 +232,22 @@ func (h *Handler) storeLastResult(
 	}
 
 	h.mu.Lock()
-	oldPath := h.lastResultPath
+	st := h.ensureExportStateLocked(scope)
+	oldPath := st.lastResultPath
 	defer h.mu.Unlock()
-	h.lastResultPath = tmpPath
-	h.lastFilename = filename
-	h.lastContentType = strings.TrimSpace(contentType)
-	h.lastUpdatedAt = time.Now().UTC()
-	h.status.HasLastResult = true
-	h.status.LastFileName = filename
+	st.lastResultPath = tmpPath
+	st.lastFilename = filename
+	st.lastContentType = strings.TrimSpace(contentType)
+	st.lastUpdatedAt = time.Now().UTC()
+	st.status.HasLastResult = true
+	st.status.LastFileName = filename
 	if strings.TrimSpace(oldPath) != "" && oldPath != tmpPath {
 		_ = os.Remove(oldPath)
 	}
 }
 
-func (h *Handler) markStatusError(message string) {
-	h.setStatus(func(s *exportStatus) {
+func (h *Handler) markStatusError(scope, message string) {
+	h.setStatus(scope, func(s *exportStatus) {
 		s.Running = false
 		s.CanCancel = false
 		s.CancelRequested = false
@@ -242,8 +257,8 @@ func (h *Handler) markStatusError(message string) {
 	})
 }
 
-func (h *Handler) markStatusCanceledByUser() {
-	h.setStatus(func(s *exportStatus) {
+func (h *Handler) markStatusCanceledByUser(scope string) {
+	h.setStatus(scope, func(s *exportStatus) {
 		s.Running = false
 		s.CanCancel = false
 		s.CancelRequested = false
@@ -271,8 +286,10 @@ func (h *Handler) exportStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
+	scope := h.portalScopeKey(r)
 	h.mu.Lock()
-	status := h.status
+	st := h.ensureExportStateLocked(scope)
+	status := st.status
 	h.mu.Unlock()
 
 	meta := models.ResponseMeta{GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano)}
@@ -308,31 +325,34 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 		forceRequested = true
 	}
 
+	scope := h.portalScopeKey(r)
 	h.mu.Lock()
-	cancel := h.fullExportCancel
-	busy := h.fullExportBusy
-	running := h.status.Running
-	alreadyRequested := h.cancelRequestedByUser
-	phase := h.status.Phase
+	st := h.ensureExportStateLocked(scope)
+	cancel := st.fullExportCancel
+	busy := st.fullExportBusy
+	running := st.status.Running
+	alreadyRequested := st.cancelRequestedByUser
+	phase := st.status.Phase
 	active := running || busy || strings.EqualFold(phase, models.PhaseTasks) || strings.EqualFold(phase, models.PhasePassport)
-	h.cancelRequestedByUser = true
-	h.status.CancelRequested = true
+	st.cancelRequestedByUser = true
+	st.status.CancelRequested = true
 
 	if forceRequested {
-		h.fullExportBusy = false
-		h.fullExportCancel = nil
-		h.status.Running = false
-		h.status.CanCancel = false
-		h.status.CancelRequested = false
-		h.status.Phase = models.PhaseCanceled
-		h.status.LastError = "export canceled by user (forced)"
-		h.status.FinishedAt = time.Now().UTC()
+		st.fullExportBusy = false
+		st.fullExportCancel = nil
+		st.status.Running = false
+		st.status.CanCancel = false
+		st.status.CancelRequested = false
+		st.status.Phase = models.PhaseCanceled
+		st.status.LastError = "export canceled by user (forced)"
+		st.status.FinishedAt = time.Now().UTC()
 		h.mu.Unlock()
 
 		if cancel != nil {
 			cancel()
 		}
 		log.WithFields(log.Fields{
+			"scope":  scope,
 			"phase":  phase,
 			"active": active,
 		}).Warn("full export force-cancel requested by user")
@@ -348,13 +368,14 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if busy && !running && cancel == nil {
-		h.fullExportBusy = false
-		h.status.Running = false
-		h.status.CanCancel = false
-		h.status.Phase = models.PhaseCanceled
-		h.status.LastError = "export canceled by user (forced reset)"
-		h.status.FinishedAt = time.Now().UTC()
+		st.fullExportBusy = false
+		st.status.Running = false
+		st.status.CanCancel = false
+		st.status.Phase = models.PhaseCanceled
+		st.status.LastError = "export canceled by user (forced reset)"
+		st.status.FinishedAt = time.Now().UTC()
 		log.WithFields(log.Fields{
+			"scope": scope,
 			"phase": phase,
 		}).Warn("forced full export lock reset on cancel request")
 	}
@@ -362,7 +383,7 @@ func (h *Handler) cancelExport(w http.ResponseWriter, r *http.Request) {
 
 	if cancel != nil && !alreadyRequested {
 		cancel()
-		log.Info("full export cancel requested by user")
+		log.WithField("scope", scope).Info("full export cancel requested by user")
 	}
 
 	message := "Запрос на отмену выгрузки отправлен"
@@ -406,10 +427,12 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
+	scope := h.portalScopeKey(r)
 	h.mu.Lock()
-	path := strings.TrimSpace(h.lastResultPath)
-	filename := h.lastFilename
-	contentType := strings.TrimSpace(h.lastContentType)
+	st := h.ensureExportStateLocked(scope)
+	path := strings.TrimSpace(st.lastResultPath)
+	filename := st.lastFilename
+	contentType := strings.TrimSpace(st.lastContentType)
 	h.mu.Unlock()
 	if path == "" {
 		writeMappedError(
@@ -451,27 +474,28 @@ func (h *Handler) downloadLastExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.cfg.DeleteLastExportAfterDownload {
-		h.consumeLastResult(path)
+		h.consumeLastResult(scope, path)
 	}
 }
 
-func (h *Handler) consumeLastResult(path string) {
+func (h *Handler) consumeLastResult(scope, path string) {
 	cleanPath := strings.TrimSpace(path)
 	if cleanPath == "" {
 		return
 	}
 
 	h.mu.Lock()
-	if h.lastResultPath != cleanPath {
+	st := h.ensureExportStateLocked(scope)
+	if st.lastResultPath != cleanPath {
 		h.mu.Unlock()
 		return
 	}
-	h.lastResultPath = ""
-	h.lastFilename = ""
-	h.lastContentType = ""
-	h.lastUpdatedAt = time.Time{}
-	h.status.HasLastResult = false
-	h.status.LastFileName = ""
+	st.lastResultPath = ""
+	st.lastFilename = ""
+	st.lastContentType = ""
+	st.lastUpdatedAt = time.Time{}
+	st.status.HasLastResult = false
+	st.status.LastFileName = ""
 	h.mu.Unlock()
 
 	if err := os.Remove(cleanPath); err != nil && !os.IsNotExist(err) {

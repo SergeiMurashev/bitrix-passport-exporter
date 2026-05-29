@@ -28,6 +28,12 @@ const (
 	StatusConflict           = "conflict"
 	StatusNotFound           = "not_found"
 	StatusInternalError      = "internal_error"
+	// Статусы сессий портала
+	StatusReadyPortalSession  = "portal_session_ready"
+	StatusActivePortalSession = "portal_session_active"
+	// Статусы загрузки данных
+	StatusDealIdsLoaded    = "deal_ids_loaded"
+	StatusDealFieldsLoaded = "deal_fields_loaded"
 
 	// Экспортные этапы.
 	PhaseIdle     = "idle"

@@ -6,6 +6,15 @@ import (
 	"path/filepath"
 )
 
+const (
+	pathRoot          = "/"
+	pathBitrixApp     = "/bitrix/app"
+	pathBitrixInstall = "/bitrix/install"
+	// path готовности
+	pathOk    = "ok"
+	pathReady = "ready"
+)
+
 // healthz godoc
 // @Summary      Liveness probe
 // @Description  Проверка, что процесс жив
@@ -14,7 +23,7 @@ import (
 // @Success      200  {string}  string  "ok"
 // @Router       /healthz [get]
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
-	_, _ = w.Write([]byte("ok"))
+	_, _ = w.Write([]byte(pathOk))
 }
 
 // readyz godoc
@@ -25,7 +34,7 @@ func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 // @Success      200  {string}  string  "ready"
 // @Router       /readyz [get]
 func (h *Handler) readyz(w http.ResponseWriter, _ *http.Request) {
-	_, _ = w.Write([]byte("ready"))
+	_, _ = w.Write([]byte(pathReady))
 }
 
 func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +67,7 @@ func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 
 func isUIPath(path string) bool {
 	switch path {
-	case "/", "/bitrix/app", "/bitrix/install":
+	case pathRoot, pathBitrixApp, pathBitrixInstall:
 		return true
 	default:
 		return false

@@ -67,6 +67,7 @@ func (h *Handler) collectExportData(
 	ctx context.Context,
 	w http.ResponseWriter,
 	r *http.Request,
+	scope string,
 	req exportRequest,
 	auditErrText *string) ([]models.ProjectRow, []models.TaskRow, []string, service.ExportStats, string, bool) {
 	bClient, ok := h.newBitrixClientFromRequest(w, r)
@@ -83,10 +84,14 @@ func (h *Handler) collectExportData(
 	)
 	if err != nil {
 		if isCanceledErr(err) {
-			h.respondExportCanceled(w, auditErrText)
+			h.respondExportCanceled(
+				scope,
+				w,
+				auditErrText,
+			)
 			return nil, nil, nil, service.ExportStats{}, "", false
 		}
-		h.markStatusError(err.Error())
+		h.markStatusError(scope, err.Error())
 		*auditErrText = err.Error()
 		log.WithError(err).Error("export load projects failed")
 		writeMappedError(
@@ -96,7 +101,7 @@ func (h *Handler) collectExportData(
 		return nil, nil, nil, service.ExportStats{}, "", false
 	}
 	if len(projects) == 0 && sourceLabel != models.BitrixApi {
-		h.markStatusError("no projects found")
+		h.markStatusError(scope, "no projects found")
 		*auditErrText = "no projects found"
 		writeMappedError(w, errNoProjectsFound, "no projects found")
 		return nil, nil, nil, service.ExportStats{}, "", false
@@ -130,10 +135,14 @@ func (h *Handler) collectExportData(
 			)
 			if pageErr != nil {
 				if isCanceledErr(pageErr) {
-					h.respondExportCanceled(w, nil)
+					h.respondExportCanceled(
+						scope,
+						w,
+						nil,
+					)
 					return nil, nil, nil, service.ExportStats{}, "", false
 				}
-				h.markStatusError("failed to load deals page: " + pageErr.Error())
+				h.markStatusError(scope, "failed to load deals page: "+pageErr.Error())
 				writeMappedError(w, errDealsPageLoadFailed, "failed to load deals page: "+pageErr.Error())
 				return nil, nil, nil, service.ExportStats{}, "", false
 			}
@@ -154,7 +163,7 @@ func (h *Handler) collectExportData(
 				"deals_with_support":    pageDealsWithSupport,
 				"support_measures_page": pageSupportMeasures,
 			}).Info("full export deals page processed")
-			h.setStatus(func(s *exportStatus) {
+			h.setStatus(scope, func(s *exportStatus) {
 				s.Phase = models.PhasePassport
 				s.DealsProcessed = processed
 				s.DealsWithSupport += pageDealsWithSupport
@@ -167,7 +176,7 @@ func (h *Handler) collectExportData(
 			start = page.Next
 		}
 
-		h.setStatus(func(s *exportStatus) {
+		h.setStatus(scope, func(s *exportStatus) {
 			s.Phase = models.PhaseTasks
 			s.DealsTotal = len(allProjects)
 		})
@@ -179,13 +188,13 @@ func (h *Handler) collectExportData(
 				req.projectField,
 				allowTitleFallback)
 			if allErr != nil {
-				h.handleTasksCollectError(w, allErr, auditErrText)
+				h.handleTasksCollectError(scope, w, allErr, auditErrText)
 				return nil, nil, nil, service.ExportStats{}, "", false
 			}
 			tasks = allTasks
 			issues = allIssues
 			stats = mergeExportStats(stats, allStats)
-			h.setStatus(func(s *exportStatus) {
+			h.setStatus(scope, func(s *exportStatus) {
 				s.Phase = models.PhaseTasks
 				s.DealsProcessed = len(allProjects)
 				s.TasksTotal = len(tasks)
@@ -205,6 +214,7 @@ func (h *Handler) collectExportData(
 				)
 				if chunkErr != nil {
 					h.handleTasksCollectError(
+						scope,
 						w,
 						chunkErr,
 						auditErrText,
@@ -214,7 +224,7 @@ func (h *Handler) collectExportData(
 				tasks = append(tasks, chunkTasks...)
 				issues = append(issues, chunkIssues...)
 				stats = mergeExportStats(stats, chunkStats)
-				h.setStatus(func(s *exportStatus) {
+				h.setStatus(scope, func(s *exportStatus) {
 					s.Phase = models.PhaseTasks
 					s.DealsProcessed = end
 					s.TasksTotal = len(tasks)
@@ -228,7 +238,7 @@ func (h *Handler) collectExportData(
 		projects = allProjects
 	} else {
 		supportDeals, supportMeasures := collectSupportStats(projects)
-		h.setStatus(func(s *exportStatus) {
+		h.setStatus(scope, func(s *exportStatus) {
 			s.DealsWithSupport = supportDeals
 			s.SupportMeasuresTotal = supportMeasures
 		})
@@ -241,7 +251,12 @@ func (h *Handler) collectExportData(
 			allowTitleFallback,
 		)
 		if callErr != nil {
-			h.handleTasksCollectError(w, callErr, auditErrText)
+			h.handleTasksCollectError(
+				scope,
+				w,
+				callErr,
+				auditErrText,
+			)
 			return nil, nil, nil, service.ExportStats{}, "", false
 		}
 	}
@@ -254,6 +269,7 @@ func (h *Handler) collectExportData(
 }
 
 func (h *Handler) buildExportBinary(
+	scope string,
 	w http.ResponseWriter,
 	exportFormat string,
 	projects []models.ProjectRow,
@@ -275,7 +291,7 @@ func (h *Handler) buildExportBinary(
 	}
 	if err != nil {
 		*auditErrText = "failed to build export file: " + err.Error()
-		h.markStatusError("failed to build export file: " + err.Error())
+		h.markStatusError(scope, "failed to build export file: "+err.Error())
 		writeMappedError(w, errExportBuildFailed, "failed to build export file: "+err.Error())
 		return nil, "", false
 	}
@@ -283,9 +299,10 @@ func (h *Handler) buildExportBinary(
 }
 
 func (h *Handler) respondExportCanceled(
+	scope string,
 	w http.ResponseWriter,
 	auditErrText *string) {
-	h.markStatusCanceledByUser()
+	h.markStatusCanceledByUser(scope)
 	if auditErrText != nil {
 		*auditErrText = "export canceled by user"
 	}
@@ -293,6 +310,7 @@ func (h *Handler) respondExportCanceled(
 }
 
 func (h *Handler) handleTasksCollectError(
+	scope string,
 	w http.ResponseWriter,
 	err error,
 	auditErrText *string) {
@@ -300,7 +318,11 @@ func (h *Handler) handleTasksCollectError(
 		return
 	}
 	if isCanceledErr(err) {
-		h.respondExportCanceled(w, auditErrText)
+		h.respondExportCanceled(
+			scope,
+			w,
+			auditErrText,
+		)
 		return
 	}
 
@@ -308,7 +330,7 @@ func (h *Handler) handleTasksCollectError(
 	if auditErrText != nil {
 		*auditErrText = detail
 	}
-	h.markStatusError(detail)
+	h.markStatusError(scope, detail)
 	if strings.Contains(strings.ToLower(err.Error()), "bitrix auth failed") {
 		writeMappedError(
 			w,
@@ -327,6 +349,7 @@ func (h *Handler) handleTasksCollectError(
 
 func (h *Handler) completeExportSuccess(
 	w http.ResponseWriter,
+	scope string,
 	dealIDs []int,
 	exportFormat string,
 	sourceLabel string,
@@ -341,8 +364,13 @@ func (h *Handler) completeExportSuccess(
 		dealIDs,
 		exportFormat,
 	)
-	h.storeLastResult(result, filename, contentType)
-	h.setStatus(func(s *exportStatus) {
+	h.storeLastResult(
+		scope,
+		result,
+		filename,
+		contentType,
+	)
+	h.setStatus(scope, func(s *exportStatus) {
 		s.Running = false
 		s.CanCancel = false
 		s.CancelRequested = false

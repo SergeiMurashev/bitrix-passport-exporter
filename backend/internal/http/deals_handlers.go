@@ -66,7 +66,7 @@ func (h *Handler) dealIDs(w http.ResponseWriter, r *http.Request) {
 	writeAPISuccess(
 		w,
 		http.StatusOK,
-		"deal_ids_loaded",
+		models.StatusDealIdsLoaded,
 		"Список ID сделок загружен",
 		models.DealIDsData{
 			Count: len(deals),
@@ -112,7 +112,7 @@ func (h *Handler) dealFields(w http.ResponseWriter, r *http.Request) {
 	writeAPISuccess(
 		w,
 		http.StatusOK,
-		"deal_fields_loaded",
+		models.StatusDealFieldsLoaded,
 		"Поля сделок загружены",
 		models.DealFieldsData{
 			Count:  len(fields),
