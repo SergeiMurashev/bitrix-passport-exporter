@@ -39,7 +39,6 @@ type portalAuthPayload struct {
 	ExpiresAt    string `json:"expires_at"`
 }
 
-// bootstrapPortalSessionFromRequest создает portalSession из данных запроса и установить cookie. Возвращает true, если сессия успешно создана.
 func (h *Handler) bootstrapPortalSessionFromRequest(
 	w http.ResponseWriter,
 	r *http.Request) bool {
@@ -93,7 +92,6 @@ func (h *Handler) bootstrapPortalSessionFromRequest(
 	return true
 }
 
-// portalSessionFromRequest извлекает portalSession из cookie запроса. Если сессия не найдена или истекла, возвращает false.
 func (h *Handler) portalSessionFromRequest(r *http.Request) (portalSession, bool) {
 	if r == nil {
 		return portalSession{}, false

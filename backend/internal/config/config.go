@@ -16,6 +16,7 @@ type Config struct {
 	Addr                          string
 	BitrixAppClientID             string
 	BitrixAppClientSecret         string
+	PortalApps                    map[string]PortalAppConfig
 	TaskWorkers                   int
 	TaskStrategy                  string
 	DeleteLastExportAfterDownload bool
@@ -29,13 +30,22 @@ type Config struct {
 	APIAccessToken                string
 }
 
+type PortalAppConfig struct {
+	Alias        string
+	Domain       string
+	ClientID     string
+	ClientSecret string
+}
+
 func Load() Config {
 	loadDotEnvIfPresent()
+	portalApps := loadPortalAppsFromEnv()
 
 	return Config{
 		Addr:                          env("ADDR", ":25504"),
 		BitrixAppClientID:             env("BITRIX_APP_CLIENT_ID", ""),
 		BitrixAppClientSecret:         env("BITRIX_APP_CLIENT_SECRET", ""),
+		PortalApps:                    portalApps,
 		TaskWorkers:                   envInt("TASK_WORKERS", 10),
 		TaskStrategy:                  env("TASK_STRATEGY", models.StrategyPerDeal),
 		DeleteLastExportAfterDownload: envBool("DELETE_LAST_EXPORT_AFTER_DOWNLOAD", false),
@@ -58,16 +68,76 @@ func (c Config) Validate() error {
 	if strategy != models.StrategyBulk && strategy != models.StrategyPerDeal {
 		return fmt.Errorf("TASK_STRATEGY must be one of: bulk, per_deal (got %q)", c.TaskStrategy)
 	}
-	if strings.TrimSpace(c.BitrixAppClientID) == "" {
-		return errors.New("BITRIX_APP_CLIENT_ID is empty")
-	}
-	if strings.TrimSpace(c.BitrixAppClientSecret) == "" {
-		return errors.New("BITRIX_APP_CLIENT_SECRET is empty")
+	if len(c.PortalApps) == 0 {
+		if strings.TrimSpace(c.BitrixAppClientID) == "" {
+			return errors.New("BITRIX_APP_CLIENT_ID is empty")
+		}
+		if strings.TrimSpace(c.BitrixAppClientSecret) == "" {
+			return errors.New("BITRIX_APP_CLIENT_SECRET is empty")
+		}
 	}
 	if c.RateLimitExportPerMinute < 0 {
 		return errors.New("RATE_LIMIT_EXPORT_PER_MINUTE must be >= 0")
 	}
 	return nil
+}
+
+func (c Config) ResolvePortalApp(domain string) (clientID, clientSecret string, ok bool) {
+	normalizedDomain := normalizeDomain(domain)
+	if normalizedDomain != "" {
+		if app, exists := c.PortalApps[normalizedDomain]; exists {
+			return app.ClientID, app.ClientSecret, true
+		}
+	}
+
+	clientID = strings.TrimSpace(c.BitrixAppClientID)
+	clientSecret = strings.TrimSpace(c.BitrixAppClientSecret)
+	if clientID == "" || clientSecret == "" {
+		return "", "", false
+	}
+	return clientID, clientSecret, true
+}
+
+func loadPortalAppsFromEnv() map[string]PortalAppConfig {
+	aliasesRaw := strings.TrimSpace(env("PORTALS", ""))
+	if aliasesRaw == "" {
+		return map[string]PortalAppConfig{}
+	}
+
+	out := make(map[string]PortalAppConfig)
+	aliases := strings.Split(aliasesRaw, ",")
+	for _, aliasRaw := range aliases {
+		alias := strings.TrimSpace(aliasRaw)
+		if alias == "" {
+			continue
+		}
+		key := strings.ToUpper(alias)
+		domain := normalizeDomain(env("B24_"+key+"_DOMAIN", ""))
+		clientID := strings.TrimSpace(env("B24_"+key+"_CLIENT_ID", ""))
+		clientSecret := strings.TrimSpace(env("B24_"+key+"_CLIENT_SECRET", ""))
+		if domain == "" || clientID == "" || clientSecret == "" {
+			fmt.Printf("skip portal %q: incomplete B24_%s_* config\n", alias, key)
+			continue
+		}
+		out[domain] = PortalAppConfig{
+			Alias:        alias,
+			Domain:       domain,
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+		}
+	}
+	return out
+}
+
+func normalizeDomain(raw string) string {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.TrimSuffix(value, "/")
+	return value
 }
 
 func loadDotEnvIfPresent() {
