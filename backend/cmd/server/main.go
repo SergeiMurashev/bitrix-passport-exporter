@@ -54,6 +54,7 @@ func main() {
 	}()
 
 	stopCh := make(chan os.Signal, 1)
+
 	signal.Notify(stopCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	sig := <-stopCh
 	log.WithField("signal", sig.String()).Info("shutdown signal received")
